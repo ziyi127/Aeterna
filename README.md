@@ -52,7 +52,20 @@ flutter devices
 
 ## 维护者
 
-- GitHub: [ziyi127](https://github.com/ziyi127)
-- Avatar: ![ziyi127 avatar](https://github.com/ziyi127.png)
-- 仓库主页: [https://github.com/ziyi127](https://github.com/ziyi127)
+<p align="center">
+	<a href="https://github.com/ziyi127">
+		<img src="https://github.com/ziyi127.png" alt="ziyi127 avatar" width="96" height="96" style="border-radius:50%;" />
+	</a>
+</p>
+
+<p align="center">
+	<strong>ziyi127</strong><br/>
+	项目维护者
+</p>
+
+<p align="center">
+	<a href="https://github.com/ziyi127">GitHub 主页</a>
+	·
+	<a href="https://github.com/ziyi127/Aeterna">项目仓库</a>
+</p>
 

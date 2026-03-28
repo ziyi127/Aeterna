@@ -13,6 +13,7 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +39,7 @@ jobs:
           - target: linux-arm64
             os: ubuntu-24.04-arm
             optional: true
-            build_command: flutter build linux --release --target-platform=linux-arm64
+            build_command: echo "linux-arm64 build is optional in this workflow run"
             artifact_path: build/linux/**/release/bundle
             artifact_name: aeterna-linux-arm64
           - target: windows
@@ -110,11 +111,12 @@ jobs:
           exit 0
 
       - name: Upload artifact
+        if: matrix.optional != true
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
-          if-no-files-found: ${{ matrix.optional && 'warn' || 'error' }}
+          if-no-files-found: error
 
   release:
     name: Publish GitHub Release

@@ -34,6 +34,8 @@ class TimerController extends ChangeNotifier {
   SyncState _syncState = SyncState.idle;
   String _syncErrorMessage = '';
   DateTime? _lastAutoSyncAttempt;
+  int _maxDriftStepMs = 250;
+  int _lastAppliedDriftMs = 0;
 
   Timer? _ticker;
   bool _syncing = false;
@@ -54,6 +56,9 @@ class TimerController extends ChangeNotifier {
   String get syncErrorMessage => _syncErrorMessage;
   bool get isSyncing => _syncing;
   bool get isRunning => _ticker != null && !_isDisposed;
+  int get maxDriftStepMs => _maxDriftStepMs;
+  int get lastAppliedDriftMs => _lastAppliedDriftMs;
+  int get currentOffsetMs => _offset.inMilliseconds;
 
   void addExam(ExamSlot slot) {
     _exams.add(slot);
@@ -207,6 +212,15 @@ class TimerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setMaxDriftStepMs(int value) {
+    final clamped = value.clamp(20, 1000);
+    if (_maxDriftStepMs == clamped) {
+      return;
+    }
+    _maxDriftStepMs = clamped;
+    notifyListeners();
+  }
+
   Future<void> syncNow() async {
     await _syncOffset(manual: true);
   }
@@ -267,6 +281,7 @@ class TimerController extends ChangeNotifier {
       final drift = targetOffset - _offset;
       final limited = _limitDriftStep(drift);
       _offset += limited;
+      _lastAppliedDriftMs = limited.inMilliseconds;
       _lastSyncAt = localNow;
       _syncState = SyncState.success;
       _syncErrorMessage = '';
@@ -293,7 +308,7 @@ class TimerController extends ChangeNotifier {
   Duration _limitDriftStep(Duration drift) {
     final sign = drift.isNegative ? -1 : 1;
     final absMs = drift.inMilliseconds.abs();
-    final step = math.min(absMs, 250);
+    final step = math.min(absMs, _maxDriftStepMs);
     return Duration(milliseconds: sign * step);
   }
 

@@ -148,6 +148,31 @@ void main() {
     controller.dispose();
   });
 
+  test('custom drift step applies larger correction per sync', () async {
+    var now = base;
+    final controller = TimerController(
+      exams: [
+        ExamSlot(
+          subject: '语文',
+          start: base,
+          end: base.add(const Duration(hours: 1)),
+        ),
+      ],
+      ntpService: FakeNtpService(
+        fetch: () => now.add(const Duration(seconds: 5)),
+      ),
+      nowProvider: () => now,
+    );
+
+    controller.setMode(TimeSourceMode.cloudPull);
+    controller.setMaxDriftStepMs(800);
+    await controller.syncNow();
+
+    expect(controller.lastAppliedDriftMs, 800);
+    expect(controller.currentOffsetMs, 800);
+    controller.dispose();
+  });
+
   test('exam list supports add update remove in editor flow', () {
     final controller = TimerController(
       exams: [

@@ -1,4 +1,5 @@
 import 'package:aeterna/core/time/timer_controller.dart';
+import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/shared/widgets/dashboard_tile.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
@@ -52,7 +53,6 @@ class HomeLauncherPage extends StatelessWidget {
                         title: '设置 Settings',
                         subtitle: '时间同步与系统参数',
                         icon: Icons.settings_outlined,
-                        trailing: Chip(label: Text(controller.modeLabel)),
                         onTap: () =>
                             Navigator.of(context).pushNamed('/settings'),
                       ),
@@ -82,11 +82,17 @@ class _LauncherHeader extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '恒时 Aeterna',
-            style: Theme.of(
-              context,
-            ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
+          Row(
+            children: [
+              const AeternaLogo(size: 34, strokeWidth: 5),
+              const SizedBox(width: 10),
+              Text(
+                '恒时 Aeterna',
+                style: Theme.of(
+                  context,
+                ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
+              ),
+            ],
           ),
           const SizedBox(height: 14),
           Align(alignment: Alignment.centerLeft, child: _actions()),
@@ -97,11 +103,17 @@ class _LauncherHeader extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: Text(
-            '恒时 Aeterna',
-            style: Theme.of(
-              context,
-            ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
+          child: Row(
+            children: [
+              const AeternaLogo(size: 38, strokeWidth: 5),
+              const SizedBox(width: 12),
+              Text(
+                '恒时 Aeterna',
+                style: Theme.of(
+                  context,
+                ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
+              ),
+            ],
           ),
         ),
         _actions(),
@@ -170,10 +182,7 @@ class _AboutTile extends StatelessWidget {
       title: '关于 About',
       subtitle: '查看版本、特性与使用说明',
       icon: Icons.info_outline,
-      trailing: const CircleAvatar(
-        radius: 18,
-        child: Icon(Icons.dashboard_customize_outlined),
-      ),
+      trailing: const AeternaLogo(size: 34, strokeWidth: 4),
       onTap: onTap,
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:aeterna/core/config/config_manager.dart';
@@ -36,6 +37,8 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
   bool _enteredFullscreen = false;
   bool _wasFullscreen = false;
+  bool _wasAlwaysOnTop = false;
+  bool _enteredAlwaysOnTop = false;
 
   TimerController? _boundController;
   final Set<String> _firedReminderKeys = <String>{};
@@ -83,6 +86,17 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
         await windowManager.setFullScreen(true);
         _enteredFullscreen = true;
       }
+
+      // Windows only: simulate uiAccess-like presentation lock by forcing
+      // top-most + focus while monitor page is active.
+      if (Platform.isWindows) {
+        _wasAlwaysOnTop = await windowManager.isAlwaysOnTop();
+        if (!_wasAlwaysOnTop) {
+          await windowManager.setAlwaysOnTop(true);
+          _enteredAlwaysOnTop = true;
+        }
+        await windowManager.focus();
+      }
     } catch (_) {
       // Ignore unsupported platforms.
     }
@@ -90,6 +104,10 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
   Future<void> _leavePresentationMode() async {
     try {
+      if (Platform.isWindows && _enteredAlwaysOnTop) {
+        await windowManager.setAlwaysOnTop(false);
+        _enteredAlwaysOnTop = false;
+      }
       if (_enteredFullscreen) {
         await windowManager.setFullScreen(false);
       }

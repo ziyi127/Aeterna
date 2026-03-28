@@ -1,9 +1,11 @@
+import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String _githubProfileUrl = 'https://github.com/ziyi127';
+const String _githubRepoUrl = 'https://github.com/ziyi127/Aeterna';
 const String _githubAvatarUrl = 'https://github.com/ziyi127.png';
 
 class AboutPage extends StatelessWidget {
@@ -47,18 +49,7 @@ class _HeroCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  Icons.dashboard_customize_outlined,
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                ),
-              ),
+              const AeternaLogo(size: 56),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -109,7 +100,7 @@ class _FeatureCard extends StatelessWidget {
           const SizedBox(height: 8),
           const _FeatureRow(
             icon: Icons.timer_outlined,
-            text: '离线/内网/云端时间同步与漂移控制',
+            text: '离线/内网/云端时间同步与漂移校正',
           ),
           const SizedBox(height: 8),
           const _FeatureRow(
@@ -152,7 +143,7 @@ class _ReleaseCard extends StatelessWidget {
   const _ReleaseCard();
 
   Future<void> _openRepo() async {
-    final uri = Uri.parse(_githubProfileUrl);
+    final uri = Uri.parse(_githubRepoUrl);
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -178,7 +169,7 @@ class _ReleaseCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           SelectableText(
-            '仓库地址: $_githubProfileUrl',
+            '仓库地址: $_githubRepoUrl',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 8),
@@ -238,10 +229,33 @@ class _MaintainerCard extends StatelessWidget {
         child: Row(
           children: [
             CircleAvatar(
-              radius: 32,
-              backgroundImage: const NetworkImage(_githubAvatarUrl),
-              onBackgroundImageError: (_, _) {},
-              child: const Icon(Icons.person_outline),
+              radius: 34,
+              backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
+              child: ClipOval(
+                child: Image.network(
+                  _githubAvatarUrl,
+                  width: 64,
+                  height: 64,
+                  fit: BoxFit.cover,
+                  filterQuality: FilterQuality.high,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      width: 64,
+                      height: 64,
+                      color: const Color(0xFFCFD4DA),
+                      alignment: Alignment.center,
+                      child: const Text(
+                        'Z',
+                        style: TextStyle(
+                          color: Color(0xFF374151),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 24,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(

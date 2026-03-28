@@ -1,5 +1,7 @@
 # 恒时 Aeterna
 
+![Aeterna Logo](assets/icons/aeterna_logo.png)
+
 Aeterna 是一个面向考场一体机/投影场景的考试看板系统，提供考试计划编排、全屏放映、时间同步与关键节点提醒。
 
 ## 核心功能
@@ -54,18 +56,3 @@ flutter devices
 - Avatar: ![ziyi127 avatar](https://github.com/ziyi127.png)
 - 仓库主页: [https://github.com/ziyi127](https://github.com/ziyi127)
 
-## 说明
-
-如果你准备将本地项目发布到 GitHub：
-
-1. 先在 GitHub 创建新仓库（例如 `Aeterna`）
-2. 再在本地目录初始化 Git 并推送
-
-```bash
-git init
-git add .
-git commit -m "chore: initial publish"
-git branch -M main
-git remote add origin https://github.com/ziyi127/Aeterna.git
-git push -u origin main
-```

@@ -96,24 +96,28 @@ class DisplaySettings {
     required this.roomLabel,
     this.themeMode = 'system',
     this.themePalette = 'emerald',
+    this.maxDriftStepMs = 250,
   });
 
   final double fontScale;
   final String roomLabel;
   final String themeMode;
   final String themePalette;
+  final int maxDriftStepMs;
 
   DisplaySettings copyWith({
     double? fontScale,
     String? roomLabel,
     String? themeMode,
     String? themePalette,
+    int? maxDriftStepMs,
   }) {
     return DisplaySettings(
       fontScale: fontScale ?? this.fontScale,
       roomLabel: roomLabel ?? this.roomLabel,
       themeMode: themeMode ?? this.themeMode,
       themePalette: themePalette ?? this.themePalette,
+      maxDriftStepMs: maxDriftStepMs ?? this.maxDriftStepMs,
     );
   }
 
@@ -123,6 +127,7 @@ class DisplaySettings {
       'roomLabel': roomLabel,
       'themeMode': themeMode,
       'themePalette': themePalette,
+      'maxDriftStepMs': maxDriftStepMs,
     };
   }
 
@@ -138,6 +143,7 @@ class DisplaySettings {
       themePalette: (json['themePalette'] as String?)?.trim().isNotEmpty == true
           ? (json['themePalette'] as String).trim()
           : 'emerald',
+      maxDriftStepMs: (json['maxDriftStepMs'] as num?)?.toInt() ?? 250,
     );
   }
 }

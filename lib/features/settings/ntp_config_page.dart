@@ -38,9 +38,11 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
   bool _saving = false;
   bool _syncingNow = false;
   bool _themeUpdating = false;
+  int _maxDriftStepMs = 250;
   String _initialNtp = '';
   String _initialRoom = '试室 A01';
   double _initialFontScale = 1.0;
+  int _initialMaxDriftStepMs = 250;
   ThemeMode _themeMode = ThemeMode.system;
   ThemePalette _themePalette = ThemePalette.emerald;
   ThemeMode _initialThemeMode = ThemeMode.system;
@@ -68,6 +70,8 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
     _ntpController.text = TimerScope.of(context).ntpAddress;
     _initialNtp = _ntpController.text;
     _lastModeHint = TimerScope.of(context).mode;
+    _maxDriftStepMs = TimerScope.of(context).maxDriftStepMs;
+    _initialMaxDriftStepMs = _maxDriftStepMs;
     _seededFromState = true;
   }
 
@@ -88,6 +92,8 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
       _fontScale = settings.fontScale;
       _initialRoom = settings.roomLabel;
       _initialFontScale = settings.fontScale;
+      _maxDriftStepMs = settings.maxDriftStepMs;
+      _initialMaxDriftStepMs = settings.maxDriftStepMs;
       _themeMode = _themeModeFromKey(settings.themeMode);
       _themePalette = ThemePaletteLabel.fromKey(settings.themePalette);
       _initialThemeMode = _themeMode;
@@ -131,6 +137,7 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
   bool get _displayDirty {
     return _roomController.text.trim() != _initialRoom ||
         (_fontScale - _initialFontScale).abs() > 0.0001 ||
+        _maxDriftStepMs != _initialMaxDriftStepMs ||
         _themeMode != _initialThemeMode ||
         _themePalette != _initialThemePalette;
   }
@@ -209,6 +216,7 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
         roomLabel: room.isEmpty ? '试室 A01' : room,
         themeMode: _themeModeKey(_themeMode),
         themePalette: _themePalette.key,
+        maxDriftStepMs: _maxDriftStepMs,
       ),
     );
     if (!mounted) {
@@ -217,6 +225,7 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
     setState(() {
       _initialRoom = room.isEmpty ? '试室 A01' : room;
       _initialFontScale = _fontScale;
+      _initialMaxDriftStepMs = _maxDriftStepMs;
       _initialThemeMode = _themeMode;
       _initialThemePalette = _themePalette;
     });
@@ -261,6 +270,7 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
 
   void _saveSyncSettings(TimerController controller) {
     controller.setNtpAddress(_ntpController.text);
+    controller.setMaxDriftStepMs(_maxDriftStepMs);
     _initialNtp = _ntpController.text.trim();
   }
 
@@ -477,6 +487,22 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
                       syncAt == null
                           ? '最近同步: 尚未同步'
                           : '最近同步: ${syncAt.hour.toString().padLeft(2, '0')}:${syncAt.minute.toString().padLeft(2, '0')}:${syncAt.second.toString().padLeft(2, '0')}',
+                    ),
+                    const SizedBox(height: 10),
+                    Text('漂移校正步长: ${_maxDriftStepMs}ms/次'),
+                    Slider(
+                      min: 20,
+                      max: 1000,
+                      divisions: 49,
+                      value: _maxDriftStepMs.toDouble(),
+                      label: '${_maxDriftStepMs}ms',
+                      onChanged: (value) {
+                        setState(() => _maxDriftStepMs = value.round());
+                      },
+                    ),
+                    Text(
+                      '当前时钟偏移: ${controller.currentOffsetMs}ms  |  最近一次校正: ${controller.lastAppliedDriftMs}ms',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 12),
                     Wrap(

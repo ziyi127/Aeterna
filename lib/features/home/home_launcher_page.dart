@@ -3,6 +3,7 @@ import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/shared/widgets/dashboard_tile.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -144,6 +145,9 @@ class _CapsuleAction extends StatelessWidget {
   final String label;
 
   Future<void> _onPressed() async {
+    if (kIsWeb) {
+      return;
+    }
     switch (label) {
       case '最小化':
         await windowManager.minimize();
@@ -160,8 +164,9 @@ class _CapsuleAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final disabledOnWeb = kIsWeb;
     return FilledButton.icon(
-      onPressed: _onPressed,
+      onPressed: disabledOnWeb ? null : _onPressed,
       icon: Icon(icon, size: 18),
       label: Text(label),
       style: FilledButton.styleFrom(

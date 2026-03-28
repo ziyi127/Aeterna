@@ -6,9 +6,6 @@ on:
       - 'v*'
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 permissions:
   contents: write
 
@@ -27,24 +24,39 @@ jobs:
             artifact_name: aeterna-android-apk
           - target: web
             os: ubuntu-latest
-            build_command: flutter build web --release
+            build_command: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
             artifact_path: build/web
             artifact_name: aeterna-web
           - target: linux
             os: ubuntu-latest
             build_command: flutter build linux --release
             artifact_path: build/linux/x64/release/bundle
-            artifact_name: aeterna-linux
+            artifact_name: aeterna-linux-x64
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            build_command: flutter build linux --release
+            artifact_path: build/linux/arm64/release/bundle
+            artifact_name: aeterna-linux-arm64
           - target: windows
             os: windows-latest
             build_command: flutter build windows --release
             artifact_path: build/windows/x64/runner/Release
-            artifact_name: aeterna-windows
+            artifact_name: aeterna-windows-x64
+          - target: windows-arm64
+            os: windows-latest
+            build_command: flutter build windows --release --target-platform=windows-arm64
+            artifact_path: build/windows/arm64/runner/Release
+            artifact_name: aeterna-windows-arm64
           - target: macos
             os: macos-latest
             build_command: flutter build macos --release
             artifact_path: build/macos/Build/Products/Release
-            artifact_name: aeterna-macos
+            artifact_name: aeterna-macos-arm64
+          - target: macos-x64
+            os: macos-13
+            build_command: flutter build macos --release
+            artifact_path: build/macos/Build/Products/Release
+            artifact_name: aeterna-macos-x64
 
     steps:
       - name: Checkout
@@ -52,13 +64,13 @@ jobs:
 
       - name: Setup Java (Android)
         if: matrix.target == 'android-apk'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Install Linux build dependencies
-        if: matrix.target == 'linux'
+        if: startsWith(matrix.target, 'linux')
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libgtk-3-dev
@@ -75,7 +87,7 @@ jobs:
         run: ${{ matrix.build_command }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
@@ -89,7 +101,7 @@ jobs:
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
@@ -102,7 +114,7 @@ jobs:
           done
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |

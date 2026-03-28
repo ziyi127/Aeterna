@@ -2,6 +2,7 @@ import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String _githubProfileUrl = 'https://github.com/ziyi127';
@@ -61,10 +62,7 @@ class _HeroCard extends StatelessWidget {
                           ?.copyWith(fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'Exam Dashboard v1.3.0',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
+                    const _VersionCaption(),
                   ],
                 ),
               ),
@@ -156,7 +154,7 @@ class _ReleaseCard extends StatelessWidget {
         children: [
           Text('版本信息', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 10),
-          Text('当前版本: v1.3.0', style: Theme.of(context).textTheme.bodyMedium),
+          const _VersionLine(),
           const SizedBox(height: 6),
           Text(
             '发布日期: 2026-03-28',
@@ -180,6 +178,42 @@ class _ReleaseCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _VersionCaption extends StatelessWidget {
+  const _VersionCaption();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snapshot) {
+        final version = snapshot.hasData ? snapshot.data!.version : '--';
+        return Text(
+          'Exam Dashboard v$version',
+          style: Theme.of(context).textTheme.bodyMedium,
+        );
+      },
+    );
+  }
+}
+
+class _VersionLine extends StatelessWidget {
+  const _VersionLine();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snapshot) {
+        final version = snapshot.hasData ? snapshot.data!.version : '--';
+        return Text(
+          '当前版本: v$version',
+          style: Theme.of(context).textTheme.bodyMedium,
+        );
+      },
     );
   }
 }

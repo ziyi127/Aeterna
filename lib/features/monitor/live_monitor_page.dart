@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:aeterna/core/config/config_manager.dart';
@@ -8,6 +7,7 @@ import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -89,7 +89,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
       // Windows only: simulate uiAccess-like presentation lock by forcing
       // top-most + focus while monitor page is active.
-      if (Platform.isWindows) {
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
         _wasAlwaysOnTop = await windowManager.isAlwaysOnTop();
         if (!_wasAlwaysOnTop) {
           await windowManager.setAlwaysOnTop(true);
@@ -104,7 +104,9 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
   Future<void> _leavePresentationMode() async {
     try {
-      if (Platform.isWindows && _enteredAlwaysOnTop) {
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.windows &&
+          _enteredAlwaysOnTop) {
         await windowManager.setAlwaysOnTop(false);
         _enteredAlwaysOnTop = false;
       }

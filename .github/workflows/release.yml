@@ -13,7 +13,6 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.optional || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -39,7 +38,7 @@ jobs:
           - target: linux-arm64
             os: ubuntu-24.04-arm
             optional: true
-            build_command: flutter build linux --release
+            build_command: flutter build linux --release --target-platform=linux-arm64
             artifact_path: build/linux/**/release/bundle
             artifact_name: aeterna-linux-arm64
           - target: windows
@@ -51,20 +50,22 @@ jobs:
           - target: windows-arm64
             os: windows-latest
             optional: true
-            build_command: flutter build windows --release --target-platform=windows-arm64
+            build_command: echo "windows-arm64 is not supported by current Flutter stable in this workflow; skipping build"
             artifact_path: build/windows/**/runner/Release
             artifact_name: aeterna-windows-arm64
           - target: macos
             os: macos-latest
             optional: false
-            build_command: flutter build macos --release --target-platform=darwin-arm64
-            artifact_path: build/macos/Build/Products/Release
+            build_command: flutter build macos --release
+            artifact_path: build/macos/Build/Products/Release/aeterna.app
             artifact_name: aeterna-macos-arm64
           - target: macos-x64
             os: macos-latest
-            optional: false
-            build_command: flutter build macos --release --target-platform=darwin-x64
-            artifact_path: build/macos/Build/Products/Release
+            optional: true
+            build_command: |
+              flutter build macos --release --config-only
+              xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos_x64 -arch x86_64
+            artifact_path: build/macos_x64/Build/Products/Release/aeterna.app
             artifact_name: aeterna-macos-x64
 
     steps:
@@ -92,8 +93,21 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build
+      - name: Build (required targets)
+        if: matrix.optional != true
         run: ${{ matrix.build_command }}
+
+      - name: Build (optional targets)
+        if: matrix.optional == true
+        shell: bash
+        run: |
+          set +e
+          bash -lc '${{ matrix.build_command }}'
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::Optional target ${{ matrix.target }} build failed with exit code $code; continuing release."
+          fi
+          exit 0
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

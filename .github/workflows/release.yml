@@ -19,7 +19,6 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    if: matrix.optional != true || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     continue-on-error: ${{ matrix.optional || false }}
     strategy:
       fail-fast: false
@@ -137,7 +136,7 @@ jobs:
         run: ${{ matrix.build_command }}
 
       - name: Build (optional targets on non-Windows)
-        if: matrix.optional == true && !startsWith(matrix.target, 'windows')
+        if: matrix.optional == true && !startsWith(matrix.target, 'windows') && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         shell: bash
         run: |
           set +e
@@ -151,7 +150,7 @@ jobs:
           exit 0
 
       - name: Build (optional targets on Windows)
-        if: matrix.optional == true && startsWith(matrix.target, 'windows')
+        if: matrix.optional == true && startsWith(matrix.target, 'windows') && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         shell: pwsh
         run: |
           $LASTEXITCODE = 0
@@ -175,7 +174,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload optional artifact
-        if: matrix.optional == true
+        if: matrix.optional == true && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
@@ -184,7 +183,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload optional build report
-        if: matrix.optional == true
+        if: matrix.optional == true && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}-report

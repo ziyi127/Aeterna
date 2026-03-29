@@ -15,6 +15,51 @@ class _MemoryPressureObserver extends WidgetsBindingObserver {
   }
 }
 
+Future<void> _initializeWindowManager() async {
+  try {
+    await windowManager.ensureInitialized();
+    
+    // Linux has limited window_manager support; use minimal configuration
+    if (Platform.isLinux) {
+      const options = WindowOptions(
+        center: true,
+        minimumSize: Size(960, 600),
+      );
+      await windowManager.waitUntilReadyToShow(
+        options,
+        () async {
+          try {
+            await windowManager.show();
+          } catch (e) {
+            debugPrint('[Linux] Warning: Could not show window: $e');
+          }
+        },
+      );
+    } else {
+      // Windows and macOS support more features
+      const options = WindowOptions(
+        center: true,
+        minimumSize: Size(960, 600),
+        titleBarStyle: TitleBarStyle.hidden,
+      );
+      await windowManager.waitUntilReadyToShow(
+        options,
+        () async {
+          try {
+            await windowManager.show();
+            await windowManager.focus();
+          } catch (e) {
+            debugPrint('Error showing/focusing window: $e');
+          }
+        },
+      );
+    }
+  } catch (e) {
+    debugPrint('Warning: Window manager initialization failed: $e');
+    // Continue running even if window manager fails
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -25,25 +70,7 @@ Future<void> main() async {
 
   // Initialize window manager for desktop platforms
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
-    try {
-      await windowManager.ensureInitialized();
-      const options = WindowOptions(
-        center: true,
-        minimumSize: Size(960, 600),
-        titleBarStyle: TitleBarStyle.hidden,
-      );
-      await windowManager.waitUntilReadyToShow(options, () async {
-        try {
-          await windowManager.show();
-          await windowManager.focus();
-        } catch (e) {
-          debugPrint('Error showing/focusing window: $e');
-        }
-      });
-    } catch (e) {
-      debugPrint('Error initializing window manager: $e');
-      // Continue running even if window manager initialization fails
-    }
+    await _initializeWindowManager();
   }
 
   runApp(const AeternaApp());

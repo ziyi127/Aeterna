@@ -24,6 +24,7 @@ class _AeternaAppState extends State<AeternaApp> {
   ThemeMode _themeMode = ThemeMode.system;
   ThemePalette _themePalette = ThemePalette.emerald;
   bool _showWelcome = false;
+  bool _welcomeClosing = false;
   String _appVersion = '--';
   String _lastSavedPlanKey = '';
 
@@ -80,12 +81,20 @@ class _AeternaAppState extends State<AeternaApp> {
   }
 
   Future<void> _dismissWelcome() async {
+    if (_welcomeClosing || !_showWelcome) {
+      return;
+    }
+    setState(() {
+      _welcomeClosing = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 360));
     await ConfigManager.setWelcomeShown(true);
     if (!mounted) {
       return;
     }
     setState(() {
       _showWelcome = false;
+      _welcomeClosing = false;
     });
   }
 
@@ -204,9 +213,17 @@ class _AeternaAppState extends State<AeternaApp> {
             children: [
               page,
               Positioned.fill(
-                child: _WelcomeOverlay(
-                  version: _appVersion,
-                  onStart: _dismissWelcome,
+                child: AnimatedOpacity(
+                  opacity: _welcomeClosing ? 0 : 1,
+                  duration: const Duration(milliseconds: 320),
+                  curve: Curves.easeOutCubic,
+                  child: IgnorePointer(
+                    ignoring: _welcomeClosing,
+                    child: _WelcomeOverlay(
+                      version: _appVersion,
+                      onStart: _dismissWelcome,
+                    ),
+                  ),
                 ),
               ),
             ],

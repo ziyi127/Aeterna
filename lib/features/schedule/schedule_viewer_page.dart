@@ -60,14 +60,19 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
             ),
           ),
           IconButton(
-            tooltip: '导出 JSON',
-            onPressed: () => _exportToFile(controller),
-            icon: const Icon(Icons.download_outlined),
-          ),
-          IconButton(
             tooltip: '导入 JSON',
             onPressed: () => _importFromFile(controller),
-            icon: const Icon(Icons.upload_outlined),
+            icon: const Icon(Icons.folder_open_outlined),
+          ),
+          IconButton(
+            tooltip: '导出 JSON',
+            onPressed: () => _exportToFile(controller),
+            icon: const Icon(Icons.save_alt_outlined),
+          ),
+          IconButton(
+            tooltip: '开启新计划',
+            onPressed: () => _startNewPlan(controller),
+            icon: const Icon(Icons.note_add_outlined),
           ),
         ],
       ),
@@ -392,6 +397,50 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
     } else {
       controller.updateExam(existingIndex, result);
     }
+  }
+
+  Future<void> _startNewPlan(TimerController controller) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('开启新计划'),
+        content: const Text('将清空当前科目并创建一个全新的计划，是否继续？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('继续'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final today = _dateOnly(now);
+    final newTitle = '新计划 ${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
+    controller.setExamMeta(examTitle: newTitle, startDate: today, endDate: today);
+    controller.replaceAllExams(const <ExamSlot>[]);
+
+    setState(() {
+      _examTitleController.text = newTitle;
+      _rangeStart = today;
+      _rangeEnd = today;
+      _selectedDate = today;
+      _dateMode = _DateMode.singleDay;
+      _editMode = true;
+    });
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已开启新计划，可立即新增科目')));
   }
 
   DateTime? _inferStartDate(List<ExamSlot> exams) {

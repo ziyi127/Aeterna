@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:aeterna/core/config/config_manager.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 enum _DateMode { singleDay, multiDay }
@@ -58,12 +61,12 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
           ),
           IconButton(
             tooltip: '导出 JSON',
-            onPressed: () => _showExportDialog(context, controller),
+            onPressed: () => _exportToFile(controller),
             icon: const Icon(Icons.download_outlined),
           ),
           IconButton(
             tooltip: '导入 JSON',
-            onPressed: () => _showImportDialog(context, controller),
+            onPressed: () => _importFromFile(controller),
             icon: const Icon(Icons.upload_outlined),
           ),
         ],
@@ -252,88 +255,109 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
     ).showSnackBar(const SnackBar(content: Text('考试基础信息已保存')));
   }
 
-  void _showExportDialog(BuildContext context, TimerController controller) {
+  Future<void> _exportToFile(TimerController controller) async {
     final json = ConfigManager.exportToJson(
       controller.exams,
       examTitle: controller.examTitle,
       startDate: controller.planStartDate,
       endDate: controller.planEndDate,
     );
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('导出配置'),
-        content: SingleChildScrollView(
-          child: Text(json, style: const TextStyle(fontSize: 12)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('关闭'),
-          ),
+
+    final safeTitle = controller.examTitle
+        .replaceAll(RegExp(r'[\\/:*?"<>|\s]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    final now = DateTime.now();
+    final suggestedName =
+        'aeterna_${safeTitle.isEmpty ? 'schedule' : safeTitle}_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.json';
+
+    try {
+      final location = await getSaveLocation(
+        suggestedName: suggestedName,
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
         ],
-      ),
-    );
+      );
+      if (location == null || !mounted) {
+        return;
+      }
+
+      final file = XFile.fromData(
+        utf8.encode(json),
+        mimeType: 'application/json',
+        name: suggestedName,
+      );
+      await file.saveTo(location.path);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已导出到: ${location.path}')));
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('导出失败，请重试')));
+    }
   }
 
-  void _showImportDialog(BuildContext context, TimerController controller) {
-    final textController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('导入配置'),
-        content: TextField(
-          controller: textController,
-          maxLines: 10,
-          decoration: const InputDecoration(hintText: '粘贴 JSON 配置内容'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final plan = ConfigManager.importPlanFromJson(
-                textController.text,
-              );
-              if (plan != null) {
-                controller.setExamMeta(
-                  examTitle: plan.examTitle,
-                  startDate: plan.startDate,
-                  endDate: plan.endDate,
-                );
-                controller.replaceAllExams(plan.exams);
-
-                setState(() {
-                  _examTitleController.text = plan.examTitle;
-                  _rangeStart = plan.startDate;
-                  _rangeEnd = plan.endDate;
-                  _selectedDate = _clampDate(
-                    _selectedDate,
-                    plan.startDate,
-                    plan.endDate,
-                  );
-                  _dateMode = _isSameDate(plan.startDate, plan.endDate)
-                      ? _DateMode.singleDay
-                      : _DateMode.multiDay;
-                });
-
-                Navigator.of(ctx).pop();
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('配置导入成功')));
-              } else {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('配置导入失败')));
-              }
-            },
-            child: const Text('导入'),
-          ),
+  Future<void> _importFromFile(TimerController controller) async {
+    try {
+      final file = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
         ],
-      ),
-    );
+      );
+      if (file == null || !mounted) {
+        return;
+      }
+
+      final content = await file.readAsString();
+      final plan = ConfigManager.importPlanFromJson(content);
+      if (plan == null) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('配置导入失败：文件内容无效')));
+        return;
+      }
+
+      controller.setExamMeta(
+        examTitle: plan.examTitle,
+        startDate: plan.startDate,
+        endDate: plan.endDate,
+      );
+      controller.replaceAllExams(plan.exams);
+
+      setState(() {
+        _examTitleController.text = plan.examTitle;
+        _rangeStart = plan.startDate;
+        _rangeEnd = plan.endDate;
+        _selectedDate = _clampDate(_selectedDate, plan.startDate, plan.endDate);
+        _dateMode = _isSameDate(plan.startDate, plan.endDate)
+            ? _DateMode.singleDay
+            : _DateMode.multiDay;
+      });
+
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('配置导入成功: ${file.name}')));
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('配置导入失败，请重试')));
+    }
   }
 
   Future<void> _openEditor(

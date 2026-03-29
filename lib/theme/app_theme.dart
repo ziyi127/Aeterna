@@ -94,6 +94,14 @@ abstract final class AppTheme {
 
     return base.copyWith(
       textTheme: text,
+      appBarTheme: AppBarTheme(
+        centerTitle: false,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: colorScheme.surface,
+        surfaceTintColor: colorScheme.surfaceTint,
+        foregroundColor: colorScheme.onSurface,
+      ),
       cardTheme: const CardThemeData(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.all(
@@ -102,11 +110,30 @@ abstract final class AppTheme {
         ),
         margin: EdgeInsets.zero,
       ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: colorScheme.surface,
+        surfaceTintColor: colorScheme.surfaceTint,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+        ),
+      ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(120, AeternaTokens.touchMinHeight),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          ),
+        ),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: WidgetStateProperty.all(
+            const Size(48, AeternaTokens.touchMinHeight),
+          ),
+          shape: WidgetStateProperty.all(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+            ),
           ),
         ),
       ),
@@ -120,6 +147,19 @@ abstract final class AppTheme {
               borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
             ),
           ),
+        ),
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+        ),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: colorScheme.inverseSurface,
+        contentTextStyle: TextStyle(color: colorScheme.onInverseSurface),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(

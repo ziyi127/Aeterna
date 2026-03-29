@@ -150,6 +150,31 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     _checkReminderMoments();
   }
 
+  Future<void> _ensurePresentationWindowState() async {
+    // Windows fullscreen may fail intermittently when transition races with
+    // native window events, so retry a few times with fallback maximize.
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return;
+    }
+
+    for (var i = 0; i < 3; i++) {
+      try {
+        final fullscreen = await windowManager.isFullScreen().timeout(
+          const Duration(milliseconds: 300),
+          onTimeout: () => false,
+        );
+        if (fullscreen) {
+          return;
+        }
+        await windowManager.maximize();
+        await windowManager.setFullScreen(true);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      } catch (_) {
+        // Ignore transient platform failures and continue retrying.
+      }
+    }
+  }
+
   Future<void> _enterPresentationMode() async {
     if (kIsWeb) {
       return;
@@ -202,6 +227,8 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       } catch (_) {
         // Ignore unsupported focus behavior.
       }
+
+      await _ensurePresentationWindowState();
 
       _startDesktopLockKeepAlive();
     }
@@ -545,7 +572,21 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       );
     }
 
+    _cleanupExpiredReminders();
+
     _showNextReminderIfIdle();
+  }
+
+  void _cleanupExpiredReminders() {
+    final now = DateTime.now();
+    final last = _lastReminderCleanupDate;
+    if (last == null ||
+        last.year != now.year ||
+        last.month != now.month ||
+        last.day != now.day) {
+      _firedReminderKeys.clear();
+      _lastReminderCleanupDate = now;
+    }
   }
 
   void _enqueueReminderIfDue({

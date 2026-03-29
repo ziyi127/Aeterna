@@ -111,11 +111,22 @@ jobs:
           fi
           exit 0
 
-      - name: Setup Flutter
+      - name: Setup Flutter (standard)
+        if: matrix.target != 'linux-arm64'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+
+      - name: Setup Flutter (linux-arm64 fallback)
+        if: matrix.target == 'linux-arm64'
+        shell: bash
+        run: |
+          set -e
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --enable-linux-desktop
+          "$RUNNER_TEMP/flutter/bin/flutter" --version
 
       - name: Flutter pub get
         run: flutter pub get

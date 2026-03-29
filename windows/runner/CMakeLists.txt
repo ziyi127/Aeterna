@@ -36,5 +36,11 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
+# Avoid linker-generated UAC manifest merging conflicts with runner.exe.manifest
+# (notably when uiAccess is set), which can fail mt.exe in CI.
+if(MSVC)
+  target_link_options(${BINARY_NAME} PRIVATE "/MANIFESTUAC:NO")
+endif()
+
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)

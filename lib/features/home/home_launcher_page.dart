@@ -1,11 +1,8 @@
 import 'package:aeterna/core/time/timer_controller.dart';
 import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/shared/widgets/dashboard_tile.dart';
-import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 
 class HomeLauncherPage extends StatelessWidget {
   const HomeLauncherPage({super.key});
@@ -18,22 +15,30 @@ class HomeLauncherPage extends StatelessWidget {
       body: LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
-          final compact = width < 940;
+          final height = constraints.maxHeight;
+          final compact = width < 940 || height < 760;
           final crossAxisCount = width < 760 ? 1 : 2;
-          final tileAspect = width > 1800 ? 1.9 : (compact ? 2.1 : 1.55);
+          const spacing = 18.0;
+          final rows = (4 / crossAxisCount).ceil();
+          final tileWidth =
+            (width - (crossAxisCount - 1) * spacing) / crossAxisCount;
+          final tileHeight = (height - 120 - (rows - 1) * spacing) / rows;
+          final tileAspect =
+            (tileWidth / tileHeight).clamp(1.0, width > 1800 ? 2.0 : 2.35);
 
           return Padding(
             padding: AeternaTokens.pagePaddingFor(width),
             child: Column(
               children: [
                 _LauncherHeader(compact: compact),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 Expanded(
                   child: GridView.count(
                     crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: 18,
-                    mainAxisSpacing: 18,
+                    crossAxisSpacing: spacing,
+                    mainAxisSpacing: spacing,
                     childAspectRatio: tileAspect,
+                    physics: const NeverScrollableScrollPhysics(),
                     children: [
                       DashboardTile(
                         title: '放映 Projector',
@@ -79,99 +84,20 @@ class _LauncherHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (compact) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const AeternaLogo(size: 34, strokeWidth: 5),
-              const SizedBox(width: 10),
-              Text(
-                '恒时 Aeterna',
-                style: Theme.of(
-                  context,
-                ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Align(alignment: Alignment.centerLeft, child: _actions()),
-        ],
-      );
-    }
-
     return Row(
       children: [
+        const AeternaLogo(size: 38, strokeWidth: 5),
+        const SizedBox(width: 12),
         Expanded(
-          child: Row(
-            children: [
-              const AeternaLogo(size: 38, strokeWidth: 5),
-              const SizedBox(width: 12),
-              Text(
-                '恒时 Aeterna',
-                style: Theme.of(
-                  context,
-                ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
-              ),
-            ],
+          child: Text(
+            '恒时 Aeterna',
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
           ),
         ),
-        _actions(),
       ],
-    );
-  }
-
-  Widget _actions() {
-    return SurfaceCard(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _CapsuleAction(icon: Icons.minimize, label: '最小化'),
-          const SizedBox(width: 8),
-          _CapsuleAction(icon: Icons.close, label: '退出'),
-          const SizedBox(width: 8),
-          _CapsuleAction(icon: Icons.fullscreen, label: '全屏'),
-        ],
-      ),
-    );
-  }
-}
-
-class _CapsuleAction extends StatelessWidget {
-  const _CapsuleAction({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  Future<void> _onPressed() async {
-    if (kIsWeb) {
-      return;
-    }
-    switch (label) {
-      case '最小化':
-        await windowManager.minimize();
-        break;
-      case '全屏':
-        final isFullScreen = await windowManager.isFullScreen();
-        await windowManager.setFullScreen(!isFullScreen);
-        break;
-      case '退出':
-        await windowManager.close();
-        break;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final disabledOnWeb = kIsWeb;
-    return FilledButton.icon(
-      onPressed: disabledOnWeb ? null : _onPressed,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: FilledButton.styleFrom(
-        minimumSize: const Size(120, AeternaTokens.touchMinHeight),
-      ),
     );
   }
 }

@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -16,55 +20,56 @@ jobs:
     continue-on-error: ${{ matrix.optional || false }}
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
         include:
           - target: android-apk
             os: ubuntu-latest
             optional: false
-            build_command: flutter build apk --release
+            build_command: flutter build apk --release --no-pub
             artifact_path: build/app/outputs/flutter-apk/app-release.apk
             artifact_name: aeterna-android-apk
           - target: web
             os: ubuntu-latest
             optional: false
-            build_command: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+            build_command: flutter build web --release --no-pub --base-href "/${{ github.event.repository.name }}/"
             artifact_path: build/web
             artifact_name: aeterna-web
           - target: linux
             os: ubuntu-latest
             optional: false
-            build_command: flutter build linux --release
+            build_command: flutter build linux --release --no-pub
             artifact_path: build/linux/x64/release/bundle
             artifact_name: aeterna-linux-x64
           - target: linux-arm64
             os: ubuntu-24.04-arm
             optional: true
-            build_command: flutter build linux --release --target-platform=linux-arm64
+            build_command: flutter build linux --release --no-pub --target-platform=linux-arm64
             artifact_path: build/linux/**/release/bundle
             artifact_name: aeterna-linux-arm64
           - target: windows
             os: windows-latest
             optional: false
-            build_command: flutter build windows --release
+            build_command: flutter build windows --release --no-pub
             artifact_path: build/windows/x64/runner/Release
             artifact_name: aeterna-windows-x64
           - target: windows-arm64
             os: windows-latest
             optional: true
-            build_command: flutter build windows --release --target-platform=windows-arm64
+            build_command: flutter build windows --release --no-pub --target-platform=windows-arm64
             artifact_path: build/windows/**/runner/Release
             artifact_name: aeterna-windows-arm64
           - target: macos
             os: macos-latest
             optional: false
-            build_command: flutter build macos --release
+            build_command: flutter build macos --release --no-pub
             artifact_path: build/macos/Build/Products/Release/aeterna.app
             artifact_name: aeterna-macos-arm64
           - target: macos-x64
             os: macos-latest
             optional: true
             build_command: |
-              flutter build macos --release --config-only
+              flutter build macos --release --config-only --no-pub
               xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos_x64 -arch x86_64
             artifact_path: build/macos_x64/Build/Products/Release/aeterna.app
             artifact_name: aeterna-macos-x64
@@ -72,6 +77,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
 
       - name: Setup Java (Android)
         if: matrix.target == 'android-apk'
@@ -79,6 +86,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Install Linux build dependencies
         if: startsWith(matrix.target, 'linux')
@@ -90,6 +98,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
 
       - name: Flutter pub get
         run: flutter pub get
@@ -126,6 +135,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
+          compression-level: 0
           if-no-files-found: error
 
       - name: Upload optional artifact
@@ -134,6 +144,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
+          compression-level: 0
           if-no-files-found: warn
 
       - name: Upload optional build report
@@ -161,7 +172,7 @@ jobs:
           cd artifacts
           for d in */ ; do
             dir="${d%/}"
-            zip -r "${dir}.zip" "$dir"
+            zip -qr -1 "${dir}.zip" "$dir"
           done
 
       - name: Create Release

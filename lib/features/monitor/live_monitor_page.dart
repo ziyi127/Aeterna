@@ -132,13 +132,17 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     if (!mounted) {
       return;
     }
-    setState(() => _overlayVisible = true);
+    if (!_overlayVisible) {
+      setState(() => _overlayVisible = true);
+    }
     _overlayTimer?.cancel();
     _overlayTimer = Timer(_overlayVisibleDuration, () {
       if (!mounted || _isHoldingExit) {
         return;
       }
-      setState(() => _overlayVisible = false);
+      if (_overlayVisible) {
+        setState(() => _overlayVisible = false);
+      }
     });
   }
 
@@ -374,6 +378,10 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   Widget build(BuildContext context) {
     final controller = TimerScope.of(context);
     final scheme = Theme.of(context).colorScheme;
+    final viewport = MediaQuery.sizeOf(context);
+    final shortestSide = math.min(viewport.width, viewport.height);
+    final panelScale = _settings.fontScale.clamp(0.7, 1.8);
+    final panelGap = (shortestSide * 0.012).clamp(8.0, 18.0).toDouble();
 
     return Listener(
       onPointerDown: (_) => _showControlsTemporarily(),
@@ -399,13 +407,24 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                             controller.activeExam?.subject ?? '当前无进行中考试',
                         roomLabel: _settings.roomLabel,
                         fontScale: _settings.fontScale,
+                        compact: viewport.width < 980 || viewport.height < 640,
                       ),
-                      const SizedBox(height: 14),
+                      SizedBox(height: panelGap),
                       Expanded(
                         child: LayoutBuilder(
                           builder: (context, constraints) {
-                            final isWide = constraints.maxWidth >= 1200;
+                            final isWide =
+                                constraints.maxWidth >= 1200 &&
+                                constraints.maxHeight >= 620;
                             if (isWide) {
+                              final leftUpperFlex =
+                                  (100 * panelScale).round().clamp(80, 160);
+                              final leftLowerFlex =
+                                  (92 * panelScale).round().clamp(76, 148);
+                              final rightUpperFlex =
+                                  (120 * panelScale).round().clamp(92, 188);
+                              final rightLowerFlex =
+                                  (86 * panelScale).round().clamp(70, 140);
                               return Row(
                                 children: [
                                   Expanded(
@@ -413,13 +432,15 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                                     child: Column(
                                       children: [
                                         Expanded(
+                                          flex: leftUpperFlex,
                                           child: _ClockPanel(
                                             controller: controller,
                                             fontScale: _settings.fontScale,
                                           ),
                                         ),
-                                        const SizedBox(height: 14),
+                                        SizedBox(height: panelGap),
                                         Expanded(
+                                          flex: leftLowerFlex,
                                           child: _SubjectPanel(
                                             controller: controller,
                                             fontScale: _settings.fontScale,
@@ -428,21 +449,22 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                                       ],
                                     ),
                                   ),
-                                  const SizedBox(width: 14),
+                                  SizedBox(width: panelGap),
                                   Expanded(
                                     flex: 2,
                                     child: Column(
                                       children: [
                                         Expanded(
-                                          flex: 2,
+                                          flex: rightUpperFlex,
                                           child: _AllExamsPanel(
                                             exams: controller.exams,
                                             now: controller.now,
                                             fontScale: _settings.fontScale,
                                           ),
                                         ),
-                                        const SizedBox(height: 14),
+                                        SizedBox(height: panelGap),
                                         Expanded(
+                                          flex: rightLowerFlex,
                                           child: _ProgressPanel(
                                             controller: controller,
                                             fontScale: _settings.fontScale,
@@ -458,28 +480,32 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                             return Column(
                               children: [
                                 Expanded(
+                                  flex: (108 * panelScale).round().clamp(82, 170),
                                   child: _ClockPanel(
                                     controller: controller,
                                     fontScale: _settings.fontScale,
                                   ),
                                 ),
-                                const SizedBox(height: 12),
+                                SizedBox(height: panelGap),
                                 Expanded(
+                                  flex: (94 * panelScale).round().clamp(78, 150),
                                   child: _SubjectPanel(
                                     controller: controller,
                                     fontScale: _settings.fontScale,
                                   ),
                                 ),
-                                const SizedBox(height: 12),
+                                SizedBox(height: panelGap),
                                 Expanded(
+                                  flex: (116 * panelScale).round().clamp(90, 186),
                                   child: _AllExamsPanel(
                                     exams: controller.exams,
                                     now: controller.now,
                                     fontScale: _settings.fontScale,
                                   ),
                                 ),
-                                const SizedBox(height: 12),
+                                SizedBox(height: panelGap),
                                 Expanded(
+                                  flex: (86 * panelScale).round().clamp(68, 136),
                                   child: _ProgressPanel(
                                     controller: controller,
                                     fontScale: _settings.fontScale,
@@ -498,8 +524,8 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                     child: _ReminderOverlay(payload: _activeReminder!),
                   ),
                 Positioned(
-                  right: 24,
-                  bottom: 24,
+                  right: 12,
+                  bottom: 12,
                   child: AnimatedOpacity(
                     duration: const Duration(milliseconds: 220),
                     opacity: _overlayVisible ? 1 : 0,
@@ -531,15 +557,54 @@ class _TopInfoBar extends StatelessWidget {
     required this.currentExam,
     required this.roomLabel,
     required this.fontScale,
+    required this.compact,
   });
 
   final String examTitle;
   final String currentExam;
   final String roomLabel;
   final double fontScale;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            examTitle,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontSize: (26 * fontScale).clamp(14, 40),
+              fontWeight: FontWeight.w800,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '当前科目: $currentExam',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontSize: (18 * fontScale).clamp(11, 28),
+              fontWeight: FontWeight.w700,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '试室号: $roomLabel',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontSize: (18 * fontScale).clamp(11, 28),
+              fontWeight: FontWeight.w800,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      );
+    }
+
     return Row(
       children: [
         Expanded(
@@ -589,7 +654,7 @@ class _ClockPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return SurfaceCard(
       style: SurfaceCardStyle.elevated,
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final adaptive =
@@ -631,7 +696,7 @@ class _SubjectPanel extends StatelessWidget {
 
     return SurfaceCard(
       style: isNearEnd ? SurfaceCardStyle.elevated : SurfaceCardStyle.filled,
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final baseTitleSize =
@@ -703,7 +768,7 @@ class _AllExamsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return SurfaceCard(
       style: SurfaceCardStyle.filled,
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -884,7 +949,7 @@ class _ProgressPanel extends StatelessWidget {
 
     return SurfaceCard(
       style: SurfaceCardStyle.filled,
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -987,9 +1052,17 @@ class _ControlCapsules extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final clampedProgress = holdProgress.clamp(0, 1).toDouble();
+    final shortest = math.min(
+      MediaQuery.sizeOf(context).width,
+      MediaQuery.sizeOf(context).height,
+    );
+    final iconSize = (shortest * 0.026).clamp(14.0, 22.0).toDouble();
+    final hPadding = (shortest * 0.015).clamp(10.0, 16.0).toDouble();
+    final vPadding = (shortest * 0.011).clamp(8.0, 12.0).toDouble();
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      spacing: 10,
+      runSpacing: 8,
       children: [
         GestureDetector(
           onTapDown: (_) => onExitHoldStart(),
@@ -997,7 +1070,7 @@ class _ControlCapsules extends StatelessWidget {
           onTapCancel: onExitHoldCancel,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.primaryContainer,
               borderRadius: BorderRadius.circular(999),
@@ -1010,8 +1083,8 @@ class _ControlCapsules extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  width: 22,
-                  height: 22,
+                  width: iconSize,
+                  height: iconSize,
                   child: CircularProgressIndicator(
                     value: clampedProgress,
                     strokeWidth: 3,
@@ -1030,7 +1103,6 @@ class _ControlCapsules extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 10),
         Material(
           color: Theme.of(context).colorScheme.secondaryContainer,
           borderRadius: BorderRadius.circular(999),
@@ -1038,11 +1110,11 @@ class _ControlCapsules extends StatelessWidget {
             borderRadius: BorderRadius.circular(999),
             onTap: onOpenSettings,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.tune),
+                  Icon(Icons.tune, size: iconSize),
                   const SizedBox(width: 8),
                   Text(
                     '设置',
@@ -1081,45 +1153,61 @@ class _ReminderOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       color: Colors.black.withValues(alpha: 0.82),
-      child: Center(
-        child: TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: 0.9, end: 1.0),
-          duration: const Duration(milliseconds: 650),
-          curve: Curves.easeOutBack,
-          builder: (context, scale, child) {
-            return Transform.scale(scale: scale, child: child);
-          },
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.notification_important,
-                color: payload.color,
-                size: 120,
-              ),
-              const SizedBox(height: 22),
-              Text(
-                payload.title,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                  color: Colors.white,
-                  fontSize: 72,
-                  fontWeight: FontWeight.w900,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final shortest = math.min(constraints.maxWidth, constraints.maxHeight);
+          final iconSize = (shortest * 0.16).clamp(52.0, 120.0).toDouble();
+          final titleSize = (shortest * 0.09).clamp(28.0, 72.0).toDouble();
+          final subtitleSize = (shortest * 0.055).clamp(18.0, 42.0).toDouble();
+
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0.9, end: 1.0),
+                duration: const Duration(milliseconds: 650),
+                curve: Curves.easeOutBack,
+                builder: (context, scale, child) {
+                  return Transform.scale(scale: scale, child: child);
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.notification_important,
+                      color: payload.color,
+                      size: iconSize,
+                    ),
+                    SizedBox(height: (shortest * 0.025).clamp(10.0, 22.0)),
+                    Text(
+                      payload.title,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                        color: Colors.white,
+                        fontSize: titleSize,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: (shortest * 0.02).clamp(8.0, 18.0)),
+                    Text(
+                      payload.subtitle,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        color: payload.color,
+                        fontSize: subtitleSize,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 18),
-              Text(
-                payload.subtitle,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: payload.color,
-                  fontSize: 42,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }

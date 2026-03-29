@@ -7,6 +7,7 @@ import 'package:aeterna/features/home/home_launcher_page.dart';
 import 'package:aeterna/features/monitor/live_monitor_page.dart';
 import 'package:aeterna/features/schedule/schedule_viewer_page.dart';
 import 'package:aeterna/features/settings/ntp_config_page.dart';
+import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -252,42 +253,110 @@ class _WelcomeOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: Colors.black.withValues(alpha: 0.72),
+      color: Colors.black.withValues(alpha: 0.82),
       child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: Card(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0.92, end: 1),
+          duration: const Duration(milliseconds: 700),
+          curve: Curves.easeOutCubic,
+          builder: (context, scale, child) {
+            return Transform.scale(scale: scale, child: child);
+          },
+          child: Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(-0.25, -0.45),
+                radius: 1.2,
+                colors: [
+                  scheme.primary.withValues(alpha: 0.32),
+                  Colors.black.withValues(alpha: 0.9),
+                ],
+              ),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(28),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  const AeternaLogo(size: 96, strokeWidth: 7),
+                  const SizedBox(height: 20),
                   Text(
                     '欢迎使用 恒时 Aeterna',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                   const SizedBox(height: 10),
-                  Text(
-                    '恒时 Aeterna 是面向考场场景的考试看板与编排系统，提供考试计划管理、时间同步与放映展示。',
-                    style: Theme.of(context).textTheme.bodyLarge,
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Text(
+                      '面向考场场景的考试看板与编排系统，提供考试计划管理、时间同步和高可读放映展示。',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        height: 1.35,
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 14),
-                  Text('版本号: v$version'),
-                  const SizedBox(height: 6),
-                  const Text('开源协议: Apache License 2.0'),
-                  const SizedBox(height: 6),
-                  const Text('维护者: ziyi127'),
-                  const SizedBox(height: 20),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: onStart,
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('开始使用'),
+                  const SizedBox(height: 22),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.22),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircleAvatar(
+                          radius: 22,
+                          backgroundImage:
+                              NetworkImage('https://github.com/ziyi127.png'),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '维护者 ziyi127',
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                            ),
+                            Text(
+                              'v$version  ·  Apache License 2.0',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Colors.white.withValues(alpha: 0.85),
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  FilledButton.icon(
+                    onPressed: onStart,
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('开始使用'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 14,
+                      ),
                     ),
                   ),
                 ],

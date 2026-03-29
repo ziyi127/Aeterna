@@ -141,7 +141,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     }
     _overlayTimer?.cancel();
     _overlayTimer = Timer(_overlayVisibleDuration, () {
-      if (!mounted || _isHoldingExit) {
+      if (!mounted || _isHoldingExit || _isHoldingSettings) {
         return;
       }
       if (_overlayVisible) {
@@ -1128,6 +1128,7 @@ class _ControlCapsules extends StatelessWidget {
           icon: Icons.logout,
           tooltip: '长按5秒退出',
           progress: holdProgress.clamp(0, 1).toDouble(),
+          accentColor: Theme.of(context).colorScheme.error,
           onHoldStart: onExitHoldStart,
           onHoldCancel: onExitHoldCancel,
         ),
@@ -1135,6 +1136,7 @@ class _ControlCapsules extends StatelessWidget {
           icon: Icons.tune,
           tooltip: '长按5秒打开设置',
           progress: settingsHoldProgress.clamp(0, 1).toDouble(),
+          accentColor: Theme.of(context).colorScheme.primary,
           onHoldStart: onSettingsHoldStart,
           onHoldCancel: onSettingsHoldCancel,
         ),
@@ -1148,6 +1150,7 @@ class _HoldCircleButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.progress,
+    required this.accentColor,
     required this.onHoldStart,
     required this.onHoldCancel,
   });
@@ -1155,6 +1158,7 @@ class _HoldCircleButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final double progress;
+  final Color accentColor;
   final VoidCallback onHoldStart;
   final VoidCallback onHoldCancel;
 
@@ -1166,6 +1170,7 @@ class _HoldCircleButton extends StatelessWidget {
     );
     final iconSize = (shortest * 0.026).clamp(14.0, 22.0).toDouble();
     final scheme = Theme.of(context).colorScheme;
+    final p = progress.clamp(0, 1).toDouble();
 
     return GestureDetector(
       onTapDown: (_) => onHoldStart(),
@@ -1174,29 +1179,60 @@ class _HoldCircleButton extends StatelessWidget {
       child: AnimatedScale(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutBack,
-        scale: progress > 0 ? 0.96 : 1.0,
+        scale: p > 0 ? 0.96 : 1.0,
         child: SizedBox(
-          width: 72,
-          height: 72,
+          width: 80,
+          height: 80,
           child: Stack(
             alignment: Alignment.center,
             children: [
-              CircularProgressIndicator(
-                value: progress,
-                strokeWidth: 3,
-                backgroundColor: scheme.primary.withValues(alpha: 0.2),
-                color: scheme.primary,
+              Container(
+                width: 78,
+                height: 78,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: accentColor.withValues(alpha: p > 0 ? 0.35 : 0.12),
+                      blurRadius: p > 0 ? 16 : 8,
+                      spreadRadius: p > 0 ? 1 : 0,
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: 78,
+                height: 78,
+                child: CircularProgressIndicator(
+                  value: 1,
+                  strokeWidth: 4,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    accentColor.withValues(alpha: 0.2),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 78,
+                height: 78,
+                child: CircularProgressIndicator(
+                  value: p,
+                  strokeWidth: 4,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation<Color>(accentColor),
+                ),
               ),
               Tooltip(
                 message: tooltip,
                 child: Container(
-                  width: 56,
-                  height: 56,
+                  width: 60,
+                  height: 60,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: scheme.primaryContainer,
                     border: Border.all(
-                      color: scheme.primary.withValues(alpha: 0.45),
+                      color: accentColor.withValues(alpha: 0.6),
+                      width: 1.6,
                     ),
                   ),
                   child: Icon(icon, size: iconSize),

@@ -207,6 +207,10 @@ jobs:
           cd artifacts
           for d in */ ; do
             dir="${d%/}"
+            if [[ "$dir" == *-report ]]; then
+              echo "Skip report artifact: $dir"
+              continue
+            fi
             zip -qr -1 "${dir}.zip" "$dir"
           done
 

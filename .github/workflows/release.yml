@@ -153,6 +153,15 @@ jobs:
         if: matrix.optional == true && startsWith(matrix.target, 'windows') && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         shell: pwsh
         run: |
+          if ('${{ matrix.target }}' -eq 'windows-arm64') {
+            $help = flutter build windows -h
+            if (-not ($help -match 'windows-arm64')) {
+              New-Item -ItemType Directory -Force -Path .ci/status | Out-Null
+              'Optional target windows-arm64 skipped: current Flutter toolchain does not support windows-arm64.' | Out-File -FilePath '.ci/status/windows-arm64.txt' -Encoding utf8
+              Write-Host 'windows-arm64 not supported by current Flutter version. Skip optional build.'
+              exit 0
+            }
+          }
           $LASTEXITCODE = 0
           Invoke-Expression "${{ matrix.build_command }}"
           $code = $LASTEXITCODE

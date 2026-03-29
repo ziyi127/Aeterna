@@ -18,45 +18,29 @@ class _MemoryPressureObserver extends WidgetsBindingObserver {
 Future<void> _initializeWindowManager() async {
   try {
     await windowManager.ensureInitialized();
-    
-    // Linux has limited window_manager support; use minimal configuration
-    if (Platform.isLinux) {
-      const options = WindowOptions(
-        center: true,
-        minimumSize: Size(960, 600),
-      );
-      await windowManager.waitUntilReadyToShow(
-        options,
-        () async {
-          try {
-            await windowManager.show();
-          } catch (e) {
-            debugPrint('[Linux] Warning: Could not show window: $e');
-          }
-        },
-      );
-    } else {
-      // Windows and macOS support more features
-      const options = WindowOptions(
-        center: true,
-        minimumSize: Size(960, 600),
-        titleBarStyle: TitleBarStyle.hidden,
-      );
-      await windowManager.waitUntilReadyToShow(
-        options,
-        () async {
-          try {
-            await windowManager.show();
-            await windowManager.focus();
-          } catch (e) {
-            debugPrint('Error showing/focusing window: $e');
-          }
-        },
-      );
-    }
+    const options = WindowOptions(
+      center: true,
+      minimumSize: Size(960, 600),
+    );
+    await windowManager.waitUntilReadyToShow(
+      options,
+      () async {
+        await windowManager.show();
+        if (!Platform.isLinux) {
+          await windowManager.focus();
+        }
+      },
+    );
   } catch (e) {
-    debugPrint('Warning: Window manager initialization failed: $e');
-    // Continue running even if window manager fails
+    debugPrint('Warning: window_manager init failed, fallback to show only: $e');
+    try {
+      await windowManager.show();
+      if (!Platform.isLinux) {
+        await windowManager.focus();
+      }
+    } catch (fallbackError) {
+      debugPrint('Warning: window_manager fallback show failed: $fallbackError');
+    }
   }
 }
 

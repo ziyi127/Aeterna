@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:aeterna/core/time/exam_models.dart';
+import 'package:aeterna/core/time/time_source_mode.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ExamPlanConfig {
@@ -148,10 +149,44 @@ class DisplaySettings {
   }
 }
 
+class SyncSettings {
+  const SyncSettings({
+    required this.ntpAddress,
+    required this.modeKey,
+    required this.maxDriftStepMs,
+  });
+
+  final String ntpAddress;
+  final String modeKey;
+  final int maxDriftStepMs;
+
+  TimeSourceMode get mode => TimeSourceModeLabel.fromKey(modeKey);
+
+  Map<String, dynamic> toJson() {
+    return {
+      'ntpAddress': ntpAddress,
+      'modeKey': modeKey,
+      'maxDriftStepMs': maxDriftStepMs,
+    };
+  }
+
+  static SyncSettings fromJson(Map<String, dynamic> json) {
+    return SyncSettings(
+      ntpAddress: (json['ntpAddress'] as String?)?.trim() ?? '',
+      modeKey: (json['modeKey'] as String?)?.trim().isNotEmpty == true
+          ? (json['modeKey'] as String).trim()
+          : TimeSourceMode.offlineManual.key,
+      maxDriftStepMs: (json['maxDriftStepMs'] as num?)?.toInt() ?? 250,
+    );
+  }
+}
+
 class ConfigManager {
   static const String _examsKey = 'aeterna_exams';
   static const String _displaySettingsKey = 'aeterna_display_settings';
   static const String _planKey = 'aeterna_exam_plan';
+  static const String _syncSettingsKey = 'aeterna_sync_settings';
+  static const String _welcomeShownKey = 'aeterna_welcome_shown';
 
   static DateTime _dateOnly(DateTime dt) => DateTime(dt.year, dt.month, dt.day);
 
@@ -304,5 +339,42 @@ class ConfigManager {
     } catch (_) {
       return const DisplaySettings(fontScale: 1.0, roomLabel: '试室 A01');
     }
+  }
+
+  static Future<void> saveSyncSettings(SyncSettings settings) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_syncSettingsKey, jsonEncode(settings.toJson()));
+  }
+
+  static Future<SyncSettings> loadSyncSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString(_syncSettingsKey);
+    if (jsonStr == null) {
+      return const SyncSettings(
+        ntpAddress: '',
+        modeKey: 'offline-manual',
+        maxDriftStepMs: 250,
+      );
+    }
+    try {
+      final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+      return SyncSettings.fromJson(data);
+    } catch (_) {
+      return const SyncSettings(
+        ntpAddress: '',
+        modeKey: 'offline-manual',
+        maxDriftStepMs: 250,
+      );
+    }
+  }
+
+  static Future<bool> isWelcomeShown() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_welcomeShownKey) ?? false;
+  }
+
+  static Future<void> setWelcomeShown(bool shown) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_welcomeShownKey, shown);
   }
 }

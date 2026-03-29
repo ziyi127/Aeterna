@@ -9,6 +9,7 @@ import 'package:aeterna/features/schedule/schedule_viewer_page.dart';
 import 'package:aeterna/features/settings/ntp_config_page.dart';
 import 'package:aeterna/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 class AeternaApp extends StatefulWidget {
   const AeternaApp({super.key});
@@ -21,6 +22,9 @@ class _AeternaAppState extends State<AeternaApp> {
   late final TimerController _controller;
   ThemeMode _themeMode = ThemeMode.system;
   ThemePalette _themePalette = ThemePalette.emerald;
+  bool _showWelcome = false;
+  String _appVersion = '--';
+  String _lastSavedPlanKey = '';
 
   @override
   void initState() {
@@ -31,6 +35,19 @@ class _AeternaAppState extends State<AeternaApp> {
     // Load saved exams and add listener for auto-save
     _loadExamsAndSetupAutoSave();
     _loadDisplayPreferences();
+    _loadSyncPreferences();
+    _loadWelcomeState();
+    _loadAppVersion();
+  }
+
+  Future<void> _loadAppVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _appVersion = info.version;
+    });
   }
 
   Future<void> _loadDisplayPreferences() async {
@@ -41,6 +58,33 @@ class _AeternaAppState extends State<AeternaApp> {
     setState(() {
       _themeMode = _themeModeFromKey(settings.themeMode);
       _themePalette = ThemePaletteLabel.fromKey(settings.themePalette);
+    });
+  }
+
+  Future<void> _loadSyncPreferences() async {
+    final sync = await ConfigManager.loadSyncSettings();
+    _controller.setNtpAddress(sync.ntpAddress);
+    _controller.setMode(sync.mode);
+    _controller.setMaxDriftStepMs(sync.maxDriftStepMs);
+  }
+
+  Future<void> _loadWelcomeState() async {
+    final shown = await ConfigManager.isWelcomeShown();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _showWelcome = !shown;
+    });
+  }
+
+  Future<void> _dismissWelcome() async {
+    await ConfigManager.setWelcomeShown(true);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _showWelcome = false;
     });
   }
 
@@ -99,9 +143,19 @@ class _AeternaAppState extends State<AeternaApp> {
     }
 
     _controller.addListener(() {
-      ConfigManager.saveExams(_controller.exams);
       final start = _controller.planStartDate ?? DateTime.now();
       final end = _controller.planEndDate ?? start;
+      final planJson = ConfigManager.exportToJson(
+        _controller.exams,
+        examTitle: _controller.examTitle,
+        startDate: start,
+        endDate: end,
+      );
+      if (_lastSavedPlanKey == planJson) {
+        return;
+      }
+      _lastSavedPlanKey = planJson;
+      ConfigManager.saveExams(_controller.exams);
       ConfigManager.savePlanConfig(
         ExamPlanConfig(
           examTitle: _controller.examTitle,
@@ -140,6 +194,23 @@ class _AeternaAppState extends State<AeternaApp> {
           ),
           '/about': (_) => const AboutPage(),
         },
+        builder: (context, child) {
+          final page = child ?? const SizedBox.shrink();
+          if (!_showWelcome) {
+            return page;
+          }
+          return Stack(
+            children: [
+              page,
+              Positioned.fill(
+                child: _WelcomeOverlay(
+                  version: _appVersion,
+                  onStart: _dismissWelcome,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -170,5 +241,61 @@ class _AeternaAppState extends State<AeternaApp> {
         end: day.add(const Duration(hours: 17)),
       ),
     ];
+  }
+}
+
+class _WelcomeOverlay extends StatelessWidget {
+  const _WelcomeOverlay({required this.version, required this.onStart});
+
+  final String version;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.72),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '欢迎使用 恒时 Aeterna',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '恒时 Aeterna 是面向考场场景的考试看板与编排系统，提供考试计划管理、时间同步与放映展示。',
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 14),
+                  Text('版本号: v$version'),
+                  const SizedBox(height: 6),
+                  const Text('开源协议: Apache License 2.0'),
+                  const SizedBox(height: 6),
+                  const Text('维护者: ziyi127'),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.icon(
+                      onPressed: onStart,
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('开始使用'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

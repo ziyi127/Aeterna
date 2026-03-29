@@ -29,10 +29,13 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   );
   bool _overlayVisible = true;
   bool _isHoldingExit = false;
+  bool _isHoldingSettings = false;
   Duration _holdElapsed = Duration.zero;
+  Duration _settingsHoldElapsed = Duration.zero;
 
   Timer? _overlayTimer;
   Timer? _exitHoldTimer;
+  Timer? _settingsHoldTimer;
   Timer? _reminderTimer;
 
   bool _enteredFullscreen = false;
@@ -70,6 +73,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     _boundController?.removeListener(_onControllerTick);
     _overlayTimer?.cancel();
     _exitHoldTimer?.cancel();
+    _settingsHoldTimer?.cancel();
     _reminderTimer?.cancel();
     _leavePresentationMode();
     super.dispose();
@@ -186,6 +190,63 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       _holdElapsed = Duration.zero;
     });
     _showControlsTemporarily();
+  }
+
+  void _startSettingsHold() {
+    if (_isHoldingSettings) {
+      return;
+    }
+    _showControlsTemporarily();
+    setState(() {
+      _isHoldingSettings = true;
+      _settingsHoldElapsed = Duration.zero;
+    });
+
+    _settingsHoldTimer?.cancel();
+    _settingsHoldTimer = Timer.periodic(const Duration(milliseconds: 50), (
+      timer,
+    ) {
+      final next = _settingsHoldElapsed + const Duration(milliseconds: 50);
+      if (next >= _exitHoldTarget) {
+        timer.cancel();
+        _settingsHoldTimer = null;
+        _confirmOpenSettings();
+        return;
+      }
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _settingsHoldElapsed = next;
+      });
+    });
+  }
+
+  void _cancelSettingsHold() {
+    if (!_isHoldingSettings) {
+      return;
+    }
+    _settingsHoldTimer?.cancel();
+    _settingsHoldTimer = null;
+    setState(() {
+      _isHoldingSettings = false;
+      _settingsHoldElapsed = Duration.zero;
+    });
+    _showControlsTemporarily();
+  }
+
+  Future<void> _confirmOpenSettings() async {
+    if (!mounted) {
+      return;
+    }
+    _settingsHoldTimer?.cancel();
+    _settingsHoldTimer = null;
+    setState(() {
+      _isHoldingSettings = false;
+      _settingsHoldElapsed = Duration.zero;
+    });
+    await _openDisplaySettingsDialog();
   }
 
   Future<void> _confirmExitPresentation() async {
@@ -535,9 +596,13 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                         holdProgress:
                             _holdElapsed.inMilliseconds /
                             _exitHoldTarget.inMilliseconds,
+                        settingsHoldProgress:
+                            _settingsHoldElapsed.inMilliseconds /
+                            _exitHoldTarget.inMilliseconds,
                         onExitHoldStart: _startExitHold,
                         onExitHoldCancel: _cancelExitHold,
-                        onOpenSettings: _openDisplaySettingsDialog,
+                        onSettingsHoldStart: _startSettingsHold,
+                        onSettingsHoldCancel: _cancelSettingsHold,
                       ),
                     ),
                   ),
@@ -1039,95 +1104,108 @@ class _ProgressPanel extends StatelessWidget {
 class _ControlCapsules extends StatelessWidget {
   const _ControlCapsules({
     required this.holdProgress,
+    required this.settingsHoldProgress,
     required this.onExitHoldStart,
     required this.onExitHoldCancel,
-    required this.onOpenSettings,
+    required this.onSettingsHoldStart,
+    required this.onSettingsHoldCancel,
   });
 
   final double holdProgress;
+  final double settingsHoldProgress;
   final VoidCallback onExitHoldStart;
   final VoidCallback onExitHoldCancel;
-  final VoidCallback onOpenSettings;
+  final VoidCallback onSettingsHoldStart;
+  final VoidCallback onSettingsHoldCancel;
 
   @override
   Widget build(BuildContext context) {
-    final clampedProgress = holdProgress.clamp(0, 1).toDouble();
+    return Wrap(
+      spacing: 10,
+      runSpacing: 8,
+      children: [
+        _HoldCircleButton(
+          icon: Icons.logout,
+          tooltip: '长按5秒退出',
+          progress: holdProgress.clamp(0, 1).toDouble(),
+          onHoldStart: onExitHoldStart,
+          onHoldCancel: onExitHoldCancel,
+        ),
+        _HoldCircleButton(
+          icon: Icons.tune,
+          tooltip: '长按5秒打开设置',
+          progress: settingsHoldProgress.clamp(0, 1).toDouble(),
+          onHoldStart: onSettingsHoldStart,
+          onHoldCancel: onSettingsHoldCancel,
+        ),
+      ],
+    );
+  }
+}
+
+class _HoldCircleButton extends StatelessWidget {
+  const _HoldCircleButton({
+    required this.icon,
+    required this.tooltip,
+    required this.progress,
+    required this.onHoldStart,
+    required this.onHoldCancel,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final double progress;
+  final VoidCallback onHoldStart;
+  final VoidCallback onHoldCancel;
+
+  @override
+  Widget build(BuildContext context) {
     final shortest = math.min(
       MediaQuery.sizeOf(context).width,
       MediaQuery.sizeOf(context).height,
     );
     final iconSize = (shortest * 0.026).clamp(14.0, 22.0).toDouble();
-    final hPadding = (shortest * 0.015).clamp(10.0, 16.0).toDouble();
-    final vPadding = (shortest * 0.011).clamp(8.0, 12.0).toDouble();
+    final scheme = Theme.of(context).colorScheme;
 
-    return Wrap(
-      spacing: 10,
-      runSpacing: 8,
-      children: [
-        GestureDetector(
-          onTapDown: (_) => onExitHoldStart(),
-          onTapUp: (_) => onExitHoldCancel(),
-          onTapCancel: onExitHoldCancel,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            padding: EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.primary,
-                width: 1.5,
+    return GestureDetector(
+      onTapDown: (_) => onHoldStart(),
+      onTapUp: (_) => onHoldCancel(),
+      onTapCancel: onHoldCancel,
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutBack,
+        scale: progress > 0 ? 0.96 : 1.0,
+        child: SizedBox(
+          width: 72,
+          height: 72,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: progress,
+                strokeWidth: 3,
+                backgroundColor: scheme.primary.withValues(alpha: 0.2),
+                color: scheme.primary,
               ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: iconSize,
-                  height: iconSize,
-                  child: CircularProgressIndicator(
-                    value: clampedProgress,
-                    strokeWidth: 3,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  clampedProgress <= 0
-                      ? '长按5秒退出'
-                      : '退出中 ${(clampedProgress * 5).toStringAsFixed(1)} / 5.0s',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-          ),
-        ),
-        Material(
-          color: Theme.of(context).colorScheme.secondaryContainer,
-          borderRadius: BorderRadius.circular(999),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(999),
-            onTap: onOpenSettings,
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.tune, size: iconSize),
-                  const SizedBox(width: 8),
-                  Text(
-                    '设置',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
+              Tooltip(
+                message: tooltip,
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: scheme.primaryContainer,
+                    border: Border.all(
+                      color: scheme.primary.withValues(alpha: 0.45),
                     ),
                   ),
-                ],
+                  child: Icon(icon, size: iconSize),
+                ),
               ),
-            ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

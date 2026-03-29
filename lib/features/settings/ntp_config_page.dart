@@ -43,6 +43,7 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
   String _initialRoom = '试室 A01';
   double _initialFontScale = 1.0;
   int _initialMaxDriftStepMs = 250;
+  Timer? _autoSaveDebounce;
   ThemeMode _themeMode = ThemeMode.system;
   ThemePalette _themePalette = ThemePalette.emerald;
   ThemeMode _initialThemeMode = ThemeMode.system;
@@ -59,6 +60,21 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
     _initialThemeMode = widget.currentThemeMode;
     _initialThemePalette = widget.currentThemePalette;
     _loadDisplaySettings();
+    _ntpController.addListener(() {
+      if (!_seededFromState || !mounted) {
+        return;
+      }
+      _scheduleAutoSave(() {
+        final controller = TimerScope.of(context);
+        _saveSyncSettings(controller);
+      });
+    });
+    _roomController.addListener(() {
+      if (!mounted) {
+        return;
+      }
+      _scheduleAutoSave(_saveDisplaySettings);
+    });
   }
 
   @override
@@ -77,9 +93,17 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
 
   @override
   void dispose() {
+    _autoSaveDebounce?.cancel();
     _ntpController.dispose();
     _roomController.dispose();
     super.dispose();
+  }
+
+  void _scheduleAutoSave(FutureOr<void> Function() action) {
+    _autoSaveDebounce?.cancel();
+    _autoSaveDebounce = Timer(const Duration(milliseconds: 480), () {
+      unawaited(Future<void>.value(action()));
+    });
   }
 
   Future<void> _loadDisplaySettings() async {
@@ -270,8 +294,16 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
 
   void _saveSyncSettings(TimerController controller) {
     controller.setNtpAddress(_ntpController.text);
+    controller.setMode(_lastModeHint);
     controller.setMaxDriftStepMs(_maxDriftStepMs);
     _initialNtp = _ntpController.text.trim();
+    ConfigManager.saveSyncSettings(
+      SyncSettings(
+        ntpAddress: _initialNtp,
+        modeKey: _lastModeHint.key,
+        maxDriftStepMs: _maxDriftStepMs,
+      ),
+    );
   }
 
   Future<void> _saveAll(TimerController controller) async {
@@ -416,44 +448,55 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _ntpController,
+                      onChanged: (_) {
+                        _scheduleAutoSave(() async {
+                          _saveSyncSettings(controller);
+                        });
+                      },
                       decoration: const InputDecoration(
                         labelText: 'NTP 地址',
                         hintText: '例如: pool.ntp.org 或 192.168.1.2',
                       ),
                     ),
                     const SizedBox(height: 16),
-                    SegmentedButton<TimeSourceMode>(
-                      segments: TimeSourceMode.values
-                          .map(
-                            (mode) => ButtonSegment<TimeSourceMode>(
-                              value: mode,
-                              label: Text(mode.label),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SegmentedButton<TimeSourceMode>(
+                        segments: TimeSourceMode.values
+                            .map(
+                              (mode) => ButtonSegment<TimeSourceMode>(
+                                value: mode,
+                                label: Text(mode.label),
+                              ),
+                            )
+                            .toList(),
+                        selected: {controller.mode},
+                        onSelectionChanged: (selection) {
+                          final newMode = selection.first;
+                          if (newMode == controller.mode) {
+                            return;
+                          }
+                          controller.setMode(newMode);
+                          if (_lastModeHint == newMode) {
+                            return;
+                          }
+                          _lastModeHint = newMode;
+                          _scheduleAutoSave(() async {
+                            _saveSyncSettings(controller);
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('已切换到 ${newMode.label}，建议立即同步'),
+                              action: newMode == TimeSourceMode.offlineManual
+                                  ? null
+                                  : SnackBarAction(
+                                      label: '立即同步',
+                                      onPressed: () => _syncNow(controller),
+                                    ),
                             ),
-                          )
-                          .toList(),
-                      selected: {controller.mode},
-                      onSelectionChanged: (selection) {
-                        final newMode = selection.first;
-                        if (newMode == controller.mode) {
-                          return;
-                        }
-                        controller.setMode(newMode);
-                        if (_lastModeHint == newMode) {
-                          return;
-                        }
-                        _lastModeHint = newMode;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('已切换到 ${newMode.label}，建议立即同步'),
-                            action: newMode == TimeSourceMode.offlineManual
-                                ? null
-                                : SnackBarAction(
-                                    label: '立即同步',
-                                    onPressed: () => _syncNow(controller),
-                                  ),
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Container(
@@ -498,6 +541,10 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
                       label: '${_maxDriftStepMs}ms',
                       onChanged: (value) {
                         setState(() => _maxDriftStepMs = value.round());
+                        controller.setMaxDriftStepMs(_maxDriftStepMs);
+                        _scheduleAutoSave(() async {
+                          _saveSyncSettings(controller);
+                        });
                       },
                     ),
                     Text(
@@ -569,6 +616,9 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _roomController,
+                      onChanged: (_) {
+                        _scheduleAutoSave(_saveDisplaySettings);
+                      },
                       decoration: const InputDecoration(
                         labelText: '试室号',
                         hintText: '例如 A201 / 第3试室',
@@ -581,7 +631,10 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
                       max: 1.8,
                       divisions: 11,
                       value: _fontScale,
-                      onChanged: (value) => setState(() => _fontScale = value),
+                      onChanged: (value) {
+                        setState(() => _fontScale = value);
+                        _scheduleAutoSave(_saveDisplaySettings);
+                      },
                     ),
                     const SizedBox(height: 8),
                     Text(
@@ -622,41 +675,47 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 12),
-                    SegmentedButton<ThemeMode>(
-                      segments: const [
-                        ButtonSegment<ThemeMode>(
-                          value: ThemeMode.system,
-                          label: Text('系统'),
-                        ),
-                        ButtonSegment<ThemeMode>(
-                          value: ThemeMode.light,
-                          label: Text('浅色'),
-                        ),
-                        ButtonSegment<ThemeMode>(
-                          value: ThemeMode.dark,
-                          label: Text('深色'),
-                        ),
-                      ],
-                      selected: {_themeMode},
-                      onSelectionChanged: _themeUpdating
-                          ? null
-                          : (selection) => _applyTheme(mode: selection.first),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SegmentedButton<ThemeMode>(
+                        segments: const [
+                          ButtonSegment<ThemeMode>(
+                            value: ThemeMode.system,
+                            label: Text('系统'),
+                          ),
+                          ButtonSegment<ThemeMode>(
+                            value: ThemeMode.light,
+                            label: Text('浅色'),
+                          ),
+                          ButtonSegment<ThemeMode>(
+                            value: ThemeMode.dark,
+                            label: Text('深色'),
+                          ),
+                        ],
+                        selected: {_themeMode},
+                        onSelectionChanged: _themeUpdating
+                            ? null
+                            : (selection) => _applyTheme(mode: selection.first),
+                      ),
                     ),
                     const SizedBox(height: 12),
-                    SegmentedButton<ThemePalette>(
-                      segments: ThemePalette.values
-                          .map(
-                            (palette) => ButtonSegment<ThemePalette>(
-                              value: palette,
-                              label: Text(palette.label),
-                            ),
-                          )
-                          .toList(),
-                      selected: {_themePalette},
-                      onSelectionChanged: _themeUpdating
-                          ? null
-                          : (selection) =>
-                                _applyTheme(palette: selection.first),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SegmentedButton<ThemePalette>(
+                        segments: ThemePalette.values
+                            .map(
+                              (palette) => ButtonSegment<ThemePalette>(
+                                value: palette,
+                                label: Text(palette.label),
+                              ),
+                            )
+                            .toList(),
+                        selected: {_themePalette},
+                        onSelectionChanged: _themeUpdating
+                            ? null
+                            : (selection) =>
+                                  _applyTheme(palette: selection.first),
+                      ),
                     ),
                   ],
                 ),

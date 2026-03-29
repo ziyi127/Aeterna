@@ -36,6 +36,7 @@ class TimerController extends ChangeNotifier {
   DateTime? _lastAutoSyncAttempt;
   int _maxDriftStepMs = 250;
   int _lastAppliedDriftMs = 0;
+  int _planRevision = 0;
 
   Timer? _ticker;
   bool _syncing = false;
@@ -59,10 +60,16 @@ class TimerController extends ChangeNotifier {
   int get maxDriftStepMs => _maxDriftStepMs;
   int get lastAppliedDriftMs => _lastAppliedDriftMs;
   int get currentOffsetMs => _offset.inMilliseconds;
+  int get planRevision => _planRevision;
+
+  void _markPlanChanged() {
+    _planRevision++;
+  }
 
   void addExam(ExamSlot slot) {
     _exams.add(slot);
     _sortExams();
+    _markPlanChanged();
     notifyListeners();
   }
 
@@ -72,6 +79,7 @@ class TimerController extends ChangeNotifier {
     }
     _exams[index] = slot;
     _sortExams();
+    _markPlanChanged();
     notifyListeners();
   }
 
@@ -80,6 +88,7 @@ class TimerController extends ChangeNotifier {
       return;
     }
     _exams.removeAt(index);
+    _markPlanChanged();
     notifyListeners();
   }
 
@@ -87,6 +96,7 @@ class TimerController extends ChangeNotifier {
     _exams.clear();
     _exams.addAll(newExams);
     _sortExams();
+    _markPlanChanged();
     notifyListeners();
   }
 
@@ -102,12 +112,14 @@ class TimerController extends ChangeNotifier {
       _examTitle = title;
       _planStartDate = end;
       _planEndDate = start;
+      _markPlanChanged();
       notifyListeners();
       return;
     }
     _examTitle = title;
     _planStartDate = start;
     _planEndDate = end;
+    _markPlanChanged();
     notifyListeners();
   }
 
@@ -179,9 +191,9 @@ class TimerController extends ChangeNotifier {
     }
     _sortExams();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      unawaited(_tick());
+      _tick();
     });
-    unawaited(_tick());
+    _tick();
   }
 
   void pause() {
@@ -252,10 +264,17 @@ class TimerController extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> _tick() async {
+  void _tick() {
     _baseNow = _nowProvider();
     notifyListeners();
-    await _syncOffset();
+
+    if (_mode == TimeSourceMode.offlineManual || _syncing) {
+      return;
+    }
+    if (!_shouldAttemptAutoSync()) {
+      return;
+    }
+    unawaited(_syncOffset());
   }
 
   Future<void> _syncOffset({bool manual = false}) async {
@@ -330,5 +349,14 @@ class TimerScope extends InheritedNotifier<TimerController> {
       throw StateError('TimerScope not found in widget tree.');
     }
     return scope!.notifier!;
+  }
+
+  static TimerController read(BuildContext context) {
+    final element = context.getElementForInheritedWidgetOfExactType<TimerScope>();
+    final widget = element?.widget;
+    if (widget is! TimerScope || widget.notifier == null) {
+      throw StateError('TimerScope not found in widget tree.');
+    }
+    return widget.notifier!;
   }
 }

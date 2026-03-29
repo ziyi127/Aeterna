@@ -31,15 +31,11 @@ class _AeternaAppState extends State<AeternaApp> {
   /// Compute a lightweight signature of the plan to detect actual changes
   /// without storing entire JSON strings (saves memory during timer ticks).
   int _computePlanSignature() {
-    return Object.hashAll([
-      _controller.exams.length,
-      _controller.examTitle.hashCode,
+    return Object.hash(
+      _controller.planRevision,
       _controller.planStartDate?.millisecondsSinceEpoch,
       _controller.planEndDate?.millisecondsSinceEpoch,
-      // Include individual exam key properties to detect structural changes
-      for (final exam in _controller.exams) ...
-        [exam.subject.hashCode, exam.start.millisecondsSinceEpoch, exam.materials.length],
-    ]);
+    );
   }
 
   @override

@@ -1,13 +1,13 @@
 import 'dart:io';
 
-import 'package:aeterna/app/app.dart';
+import 'package:aeterna/app/runtime_app.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
-final _memoryPressureObserver = _MemoryPressureObserver();
+final _memoryPressureObserver = _RuntimeMemoryPressureObserver();
 
-class _MemoryPressureObserver extends WidgetsBindingObserver {
+class _RuntimeMemoryPressureObserver extends WidgetsBindingObserver {
   @override
   void didHaveMemoryPressure() {
     PaintingBinding.instance.imageCache.clear();
@@ -18,9 +18,9 @@ class _MemoryPressureObserver extends WidgetsBindingObserver {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Cap image cache to avoid excessive memory growth across platforms.
-  PaintingBinding.instance.imageCache.maximumSize = 80;
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 24 << 20;
+  // Runtime-only mode: stricter cache limits for lower memory footprint.
+  PaintingBinding.instance.imageCache.maximumSize = 60;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 16 << 20;
   WidgetsBinding.instance.addObserver(_memoryPressureObserver);
 
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
@@ -36,5 +36,5 @@ Future<void> main() async {
     });
   }
 
-  runApp(const AeternaApp());
+  runApp(const AeternaRuntimeApp());
 }

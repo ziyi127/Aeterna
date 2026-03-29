@@ -74,7 +74,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final controller = TimerScope.of(context);
+    final controller = TimerScope.read(context);
     if (_boundController == controller) {
       return;
     }
@@ -114,11 +114,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       return;
     }
 
-    final isDesktop =
-        defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.linux ||
-        defaultTargetPlatform == TargetPlatform.macOS;
-    if (!isDesktop) {
+    if (defaultTargetPlatform != TargetPlatform.windows) {
       return;
     }
 
@@ -128,17 +124,33 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
         defaultTargetPlatform == TargetPlatform.windows &&
         !_windowsUiAccessEnabled;
     final keepAliveInterval = isWindowsWithoutUiAccess
-        ? const Duration(milliseconds: 500)
-        : const Duration(milliseconds: 900);
+      ? const Duration(milliseconds: 900)
+      : const Duration(milliseconds: 1800);
 
     _desktopLockKeepAliveTimer?.cancel();
     _desktopLockKeepAliveTimer = Timer.periodic(
       keepAliveInterval,
       (_) async {
         try {
-          await windowManager.setFullScreen(true);
-          await windowManager.setAlwaysOnTop(true);
-          await windowManager.focus();
+          final isFullscreen = await windowManager.isFullScreen().timeout(
+            const Duration(milliseconds: 220),
+            onTimeout: () => false,
+          );
+          if (!isFullscreen) {
+            await windowManager.setFullScreen(true);
+          }
+
+          final isOnTop = await windowManager.isAlwaysOnTop().timeout(
+            const Duration(milliseconds: 220),
+            onTimeout: () => false,
+          );
+          if (!isOnTop) {
+            await windowManager.setAlwaysOnTop(true);
+          }
+
+          if (isWindowsWithoutUiAccess && (!isFullscreen || !isOnTop)) {
+            await windowManager.focus();
+          }
         } catch (_) {
           // Ignore unsupported behavior.
         }
@@ -523,7 +535,16 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     }
 
     final now = controller.now;
+    final upcomingCutoff = now.add(const Duration(minutes: 16));
+    final expiredCutoff = now.subtract(const Duration(minutes: 2));
     for (final exam in controller.exams) {
+      if (exam.start.isAfter(upcomingCutoff)) {
+        break;
+      }
+      if (exam.end.isBefore(expiredCutoff)) {
+        continue;
+      }
+
       _enqueueReminderIfDue(
         key: '${exam.start.toIso8601String()}|pre_start_15',
         triggerAt: exam.start.subtract(const Duration(minutes: 15)),
@@ -632,19 +653,12 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final controller = TimerScope.of(context);
+    final controller = _boundController ?? TimerScope.read(context);
     final scheme = Theme.of(context).colorScheme;
     final viewport = MediaQuery.sizeOf(context);
     final shortestSide = math.min(viewport.width, viewport.height);
     final panelScale = _settings.fontScale.clamp(0.7, 1.8);
     final panelGap = (shortestSide * 0.012).clamp(8.0, 18.0).toDouble();
-    final planExamInfo = controller.exams
-      .map((e) => e.message.trim())
-      .firstWhere((m) => m.isNotEmpty, orElse: () => _defaultExamInfo);
-    final currentExamInfo =
-      controller.activeExam?.message.trim().isNotEmpty == true
-      ? controller.activeExam!.message.trim()
-      : planExamInfo;
 
     return PopScope(
       canPop: false,
@@ -671,8 +685,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                   child: Column(
                     children: [
                       _TopInfoBar(
-                        examTitle: controller.examTitle,
-                        examInfo: currentExamInfo,
+                        controller: controller,
                         roomLabel: _settings.roomLabel,
                         fontScale: _settings.fontScale,
                         compact: viewport.width < 980 || viewport.height < 640,
@@ -725,8 +738,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                                         Expanded(
                                           flex: rightUpperFlex,
                                           child: _AllExamsPanel(
-                                            exams: controller.exams,
-                                            now: controller.now,
+                                            controller: controller,
                                             fontScale: _settings.fontScale,
                                           ),
                                         ),
@@ -766,8 +778,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                                 Expanded(
                                   flex: (116 * panelScale).round().clamp(90, 186),
                                   child: _AllExamsPanel(
-                                    exams: controller.exams,
-                                    now: controller.now,
+                                    controller: controller,
                                     fontScale: _settings.fontScale,
                                   ),
                                 ),
@@ -826,21 +837,31 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
 class _TopInfoBar extends StatelessWidget {
   const _TopInfoBar({
-    required this.examTitle,
-    required this.examInfo,
+    required this.controller,
     required this.roomLabel,
     required this.fontScale,
     required this.compact,
   });
 
-  final String examTitle;
-  final String examInfo;
+  final TimerController controller;
   final String roomLabel;
   final double fontScale;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final examTitle = controller.examTitle;
+        final planExamInfo = controller.exams
+            .map((e) => e.message.trim())
+            .firstWhere((m) => m.isNotEmpty, orElse: () => _LiveMonitorPageState._defaultExamInfo);
+        final currentExamInfo =
+            controller.activeExam?.message.trim().isNotEmpty == true
+            ? controller.activeExam!.message.trim()
+            : planExamInfo;
+
     if (compact) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -856,7 +877,7 @@ class _TopInfoBar extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '考试信息: $examInfo',
+            '考试信息: $currentExamInfo',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
               fontSize: (18 * fontScale).clamp(11, 28),
               fontWeight: FontWeight.w700,
@@ -893,7 +914,7 @@ class _TopInfoBar extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
               Text(
-                '考试信息: $examInfo',
+                '考试信息: $currentExamInfo',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   fontSize: (20 * fontScale).clamp(12, 32),
                   fontWeight: FontWeight.w700,
@@ -914,6 +935,8 @@ class _TopInfoBar extends StatelessWidget {
         ),
       ],
     );
+      },
+    );
   }
 }
 
@@ -925,7 +948,9 @@ class _ClockPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SurfaceCard(
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => SurfaceCard(
       style: SurfaceCardStyle.elevated,
       padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
       child: LayoutBuilder(
@@ -951,6 +976,7 @@ class _ClockPanel extends StatelessWidget {
           );
         },
       ),
+    ),
     );
   }
 }
@@ -963,12 +989,15 @@ class _SubjectPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isNearEnd = controller.isNearEnd;
-    final scheme = Theme.of(context).colorScheme;
-    final textColor = isNearEnd ? Colors.red : scheme.onSurface;
-    final activeExam = controller.activeExam;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final isNearEnd = controller.isNearEnd;
+        final scheme = Theme.of(context).colorScheme;
+        final textColor = isNearEnd ? Colors.red : scheme.onSurface;
+        final activeExam = controller.activeExam;
 
-    return SurfaceCard(
+        return SurfaceCard(
       style: isNearEnd ? SurfaceCardStyle.elevated : SurfaceCardStyle.filled,
       padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
       child: LayoutBuilder(
@@ -1082,23 +1111,25 @@ class _SubjectPanel extends StatelessWidget {
         },
       ),
     );
+      },
+    );
   }
 }
 
 class _AllExamsPanel extends StatelessWidget {
   const _AllExamsPanel({
-    required this.exams,
-    required this.now,
+    required this.controller,
     required this.fontScale,
   });
 
-  final List<ExamSlot> exams;
-  final DateTime now;
+  final TimerController controller;
   final double fontScale;
 
   @override
   Widget build(BuildContext context) {
-    return SurfaceCard(
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => SurfaceCard(
       style: SurfaceCardStyle.filled,
       padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
       child: Column(
@@ -1113,13 +1144,14 @@ class _AllExamsPanel extends StatelessWidget {
           const SizedBox(height: 10),
           Expanded(
             child: _AutoScrollExamList(
-              exams: exams,
-              now: now,
+              exams: controller.exams,
+              now: controller.now,
               fontScale: fontScale,
             ),
           ),
         ],
       ),
+    ),
     );
   }
 }
@@ -1276,10 +1308,13 @@ class _ProgressPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeExam = controller.activeExam;
-    final nextExam = controller.nextExam;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final activeExam = controller.activeExam;
+        final nextExam = controller.nextExam;
 
-    return SurfaceCard(
+        return SurfaceCard(
       style: SurfaceCardStyle.filled,
       padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
       child: Column(
@@ -1364,6 +1399,8 @@ class _ProgressPanel extends StatelessWidget {
             ),
         ],
       ),
+    );
+      },
     );
   }
 }

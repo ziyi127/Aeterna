@@ -271,7 +271,9 @@ class _MaintainerCard extends StatelessWidget {
                   width: 64,
                   height: 64,
                   fit: BoxFit.cover,
-                  filterQuality: FilterQuality.high,
+                  cacheWidth: 128,
+                  cacheHeight: 128,
+                  filterQuality: FilterQuality.medium,
                   errorBuilder: (context, error, stackTrace) {
                     return Container(
                       width: 64,

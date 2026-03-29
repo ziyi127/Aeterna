@@ -56,6 +56,8 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   final Queue<_ReminderPayload> _reminderQueue = Queue<_ReminderPayload>();
   _ReminderPayload? _activeReminder;
 
+  DateTime? _lastReminderCleanupDate;
+
   @override
   void initState() {
     super.initState();

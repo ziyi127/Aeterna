@@ -26,7 +26,21 @@ class _AeternaAppState extends State<AeternaApp> {
   bool _showWelcome = false;
   bool _welcomeClosing = false;
   String _appVersion = '--';
-  String _lastSavedPlanKey = '';
+  int _lastSavedPlanSignature = 0;
+
+  /// Compute a lightweight signature of the plan to detect actual changes
+  /// without storing entire JSON strings (saves memory during timer ticks).
+  int _computePlanSignature() {
+    return Object.hashAll([
+      _controller.exams.length,
+      _controller.examTitle.hashCode,
+      _controller.planStartDate?.millisecondsSinceEpoch,
+      _controller.planEndDate?.millisecondsSinceEpoch,
+      // Include individual exam key properties to detect structural changes
+      for (final exam in _controller.exams) ...
+        [exam.subject.hashCode, exam.start.millisecondsSinceEpoch, exam.materials.length],
+    ]);
+  }
 
   @override
   void initState() {
@@ -155,16 +169,13 @@ class _AeternaAppState extends State<AeternaApp> {
     _controller.addListener(() {
       final start = _controller.planStartDate ?? DateTime.now();
       final end = _controller.planEndDate ?? start;
-      final planJson = ConfigManager.exportToJson(
-        _controller.exams,
-        examTitle: _controller.examTitle,
-        startDate: start,
-        endDate: end,
-      );
-      if (_lastSavedPlanKey == planJson) {
+      // Use lightweight signature to detect actual plan changes.
+      // This avoids expensive JSON serialization on every second tick.
+      final currentSignature = _computePlanSignature();
+      if (_lastSavedPlanSignature == currentSignature) {
         return;
       }
-      _lastSavedPlanKey = planJson;
+      _lastSavedPlanSignature = currentSignature;
       ConfigManager.saveExams(_controller.exams);
       ConfigManager.savePlanConfig(
         ExamPlanConfig(

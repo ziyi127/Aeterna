@@ -107,25 +107,32 @@ jobs:
         if: matrix.optional != true
         run: ${{ matrix.build_command }}
 
-      - name: Build (optional targets)
-        if: matrix.optional == true
-        id: optional_build
+      - name: Build (optional targets on non-Windows)
+        if: matrix.optional == true && !startsWith(matrix.target, 'windows')
+        shell: bash
+        run: |
+          set +e
+          ${{ matrix.build_command }}
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            mkdir -p .ci/status
+            echo "Optional target ${{ matrix.target }} build failed with exit code $code." > .ci/status/${{ matrix.target }}.txt
+            echo "::warning::Optional target ${{ matrix.target }} build failed with exit code $code."
+          fi
+          exit 0
+
+      - name: Build (optional targets on Windows)
+        if: matrix.optional == true && startsWith(matrix.target, 'windows')
         shell: pwsh
         run: |
-          $cmd = @'
-          ${{ matrix.build_command }}
-          '@
           $LASTEXITCODE = 0
-          Invoke-Expression $cmd
+          Invoke-Expression "${{ matrix.build_command }}"
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             New-Item -ItemType Directory -Force -Path .ci/status | Out-Null
             $message = "Optional target ${{ matrix.target }} build failed with exit code $code."
             $message | Out-File -FilePath ".ci/status/${{ matrix.target }}.txt" -Encoding utf8
-            "build_failed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
             Write-Host "::warning::$message"
-          } else {
-            "build_failed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
           exit 0
 
@@ -139,16 +146,16 @@ jobs:
           if-no-files-found: error
 
       - name: Upload optional artifact
-        if: matrix.optional == true && steps.optional_build.outputs.build_failed != 'true'
+        if: matrix.optional == true
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
           compression-level: 0
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Upload optional build report
-        if: matrix.optional == true && steps.optional_build.outputs.build_failed == 'true'
+        if: matrix.optional == true
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}-report
@@ -176,7 +183,7 @@ jobs:
           done
 
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |

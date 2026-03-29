@@ -39,7 +39,7 @@ jobs:
           - target: linux-arm64
             os: ubuntu-24.04-arm
             optional: true
-            build_command: echo "linux-arm64 build is optional in this workflow run"
+            build_command: flutter build linux --release --target-platform=linux-arm64
             artifact_path: build/linux/**/release/bundle
             artifact_name: aeterna-linux-arm64
           - target: windows
@@ -51,7 +51,7 @@ jobs:
           - target: windows-arm64
             os: windows-latest
             optional: true
-            build_command: echo "windows-arm64 is not supported by current Flutter stable in this workflow; skipping build"
+            build_command: flutter build windows --release --target-platform=windows-arm64
             artifact_path: build/windows/**/runner/Release
             artifact_name: aeterna-windows-arm64
           - target: macos
@@ -100,14 +100,24 @@ jobs:
 
       - name: Build (optional targets)
         if: matrix.optional == true
-        shell: bash
+        id: optional_build
+        shell: pwsh
         run: |
-          set +e
-          bash -lc '${{ matrix.build_command }}'
-          code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "::warning::Optional target ${{ matrix.target }} build failed with exit code $code; continuing release."
-          fi
+          $cmd = @'
+          ${{ matrix.build_command }}
+          '@
+          $LASTEXITCODE = 0
+          Invoke-Expression $cmd
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            New-Item -ItemType Directory -Force -Path .ci/status | Out-Null
+            $message = "Optional target ${{ matrix.target }} build failed with exit code $code."
+            $message | Out-File -FilePath ".ci/status/${{ matrix.target }}.txt" -Encoding utf8
+            "build_failed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "::warning::$message"
+          } else {
+            "build_failed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
           exit 0
 
       - name: Upload artifact
@@ -117,6 +127,22 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
           if-no-files-found: error
+
+      - name: Upload optional artifact
+        if: matrix.optional == true && steps.optional_build.outputs.build_failed != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: warn
+
+      - name: Upload optional build report
+        if: matrix.optional == true && steps.optional_build.outputs.build_failed == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact_name }}-report
+          path: .ci/status/${{ matrix.target }}.txt
+          if-no-files-found: ignore
 
   release:
     name: Publish GitHub Release

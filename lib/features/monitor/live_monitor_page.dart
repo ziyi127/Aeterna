@@ -603,14 +603,20 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       ? controller.activeExam!.message.trim()
       : planExamInfo;
 
-    return Listener(
-      onPointerDown: (_) => _showControlsTemporarily(),
-      onPointerMove: (_) => _showControlsTemporarily(),
-      onPointerSignal: (_) => _showControlsTemporarily(),
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: _showControlsTemporarily,
-        child: Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        // Prevent Android back button from exiting presentation mode.
+        // Users must use the long-press exit button instead.
+      },
+      child: Listener(
+        onPointerDown: (_) => _showControlsTemporarily(),
+        onPointerMove: (_) => _showControlsTemporarily(),
+        onPointerSignal: (_) => _showControlsTemporarily(),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _showControlsTemporarily,
+          child: Scaffold(
           backgroundColor: scheme.surface,
           body: SafeArea(
             child: Stack(
@@ -770,6 +776,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -1389,15 +1396,17 @@ class _HoldCircleButton extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final p = progress.clamp(0, 1).toDouble();
 
-    return GestureDetector(
-      onTapDown: (_) => onHoldStart(),
-      onTapUp: (_) => onHoldCancel(),
-      onTapCancel: onHoldCancel,
-      child: AnimatedScale(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutBack,
-        scale: p > 0 ? 0.96 : 1.0,
-        child: SizedBox(
+    return Listener(
+      onPointerDown: (_) => onHoldStart(),
+      onPointerUp: (_) => onHoldCancel(),
+      behavior: HitTestBehavior.opaque,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutBack,
+          scale: p > 0 ? 0.96 : 1.0,
+          child: SizedBox(
           width: 80,
           height: 80,
           child: Stack(
@@ -1459,6 +1468,7 @@ class _HoldCircleButton extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }

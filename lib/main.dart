@@ -23,17 +23,27 @@ Future<void> main() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 24 << 20;
   WidgetsBinding.instance.addObserver(_memoryPressureObserver);
 
+  // Initialize window manager for desktop platforms
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
-    await windowManager.ensureInitialized();
-    const options = WindowOptions(
-      center: true,
-      minimumSize: Size(960, 600),
-      titleBarStyle: TitleBarStyle.hidden,
-    );
-    await windowManager.waitUntilReadyToShow(options, () async {
-      await windowManager.show();
-      await windowManager.focus();
-    });
+    try {
+      await windowManager.ensureInitialized();
+      const options = WindowOptions(
+        center: true,
+        minimumSize: Size(960, 600),
+        titleBarStyle: TitleBarStyle.hidden,
+      );
+      await windowManager.waitUntilReadyToShow(options, () async {
+        try {
+          await windowManager.show();
+          await windowManager.focus();
+        } catch (e) {
+          debugPrint('Error showing/focusing window: $e');
+        }
+      });
+    } catch (e) {
+      debugPrint('Error initializing window manager: $e');
+      // Continue running even if window manager initialization fails
+    }
   }
 
   runApp(const AeternaApp());

@@ -31,73 +31,59 @@ jobs:
           - target: android-apk
             os: ubuntu-latest
             optional: false
-            build_command: flutter build apk --release --no-pub --target lib/main_runtime.dart --tree-shake-icons --split-per-abi
+            build_command: flutter build apk --release --tree-shake-icons --split-per-abi
             artifact_path: build/app/outputs/flutter-apk/*.apk
-            artifact_name: aeterna-runtime-android-apk
+            artifact_name: aeterna-android-apk
           - target: web
             os: ubuntu-latest
             optional: false
-            build_command: flutter build web --release --no-pub --target lib/main_runtime.dart --tree-shake-icons --web-renderer html --base-href "/${{ github.event.repository.name }}/"
+            build_command: flutter build web --release --tree-shake-icons --base-href "/${{ github.event.repository.name }}/"
             artifact_path: build/web
-            artifact_name: aeterna-runtime-web
+            artifact_name: aeterna-web
           - target: linux
             os: ubuntu-latest
             optional: false
-            build_command: flutter build linux --release --no-pub --target lib/main_runtime.dart --tree-shake-icons
+            build_command: flutter build linux --release --tree-shake-icons
             artifact_path: build/linux/x64/release/bundle
-            artifact_name: aeterna-runtime-linux-x64
+            artifact_name: aeterna-linux-x64
           - target: linux-arm64
             os: ubuntu-24.04-arm
             optional: true
-            build_command: flutter build linux --release --no-pub --target lib/main_runtime.dart --tree-shake-icons --target-platform=linux-arm64
+            build_command: flutter build linux --release --tree-shake-icons --target-platform=linux-arm64
             artifact_path: build/linux/**/release/bundle
-            artifact_name: aeterna-runtime-linux-arm64
+            artifact_name: aeterna-linux-arm64
           - target: windows
             os: windows-latest
             optional: false
-            build_command: flutter build windows --release --no-pub --target lib/main_runtime.dart --tree-shake-icons
+            build_command: flutter build windows --release --tree-shake-icons
             artifact_path: build/windows/x64/runner/Release
-            artifact_name: aeterna-runtime-windows-x64
+            artifact_name: aeterna-windows-x64
           - target: windows-arm64
             os: windows-latest
             optional: true
-            build_command: flutter build windows --release --no-pub --target lib/main_runtime.dart --tree-shake-icons --target-platform=windows-arm64
+            build_command: flutter build windows --release --tree-shake-icons --target-platform=windows-arm64
             artifact_path: build/windows/**/runner/Release
-            artifact_name: aeterna-runtime-windows-arm64
+            artifact_name: aeterna-windows-arm64
           - target: macos
             os: macos-latest
             optional: false
-            build_command: flutter build macos --release --no-pub --target lib/main_runtime.dart --tree-shake-icons
+            build_command: flutter build macos --release --tree-shake-icons
             artifact_path: build/macos/Build/Products/Release/aeterna.app
-            artifact_name: aeterna-runtime-macos-arm64
+            artifact_name: aeterna-macos-arm64
           - target: macos-x64
             os: macos-latest
             optional: true
             build_command: |
-              flutter build macos --release --config-only --no-pub --target lib/main_runtime.dart
+              flutter build macos --release --config-only
               xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos_x64 -arch x86_64
             artifact_path: build/macos_x64/Build/Products/Release/aeterna.app
-            artifact_name: aeterna-runtime-macos-x64
+            artifact_name: aeterna-macos-x64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
-
-      - name: Activate runtime-only pubspec (Linux/macOS)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cp pubspec.runtime.yaml pubspec.yaml
-          rm -f pubspec.lock
-
-      - name: Activate runtime-only pubspec (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Copy-Item -Path pubspec.runtime.yaml -Destination pubspec.yaml -Force
-          if (Test-Path pubspec.lock) { Remove-Item pubspec.lock -Force }
 
       - name: Setup Java (Android)
         if: matrix.target == 'android-apk'
@@ -145,7 +131,7 @@ jobs:
           "$RUNNER_TEMP/flutter/bin/flutter" config --enable-linux-desktop
           "$RUNNER_TEMP/flutter/bin/flutter" --version
 
-      - name: Flutter pub get (runtime-only deps)
+      - name: Flutter pub get
         run: flutter pub get
 
       - name: Build (required targets)

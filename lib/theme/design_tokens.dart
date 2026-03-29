@@ -16,6 +16,14 @@ abstract final class AeternaTokens {
 
   static const String timeFontFamily = 'monospace';
 
+  // Global motion tokens for consistent app-wide animation rhythm.
+  static const Duration motionDurationFast = Duration(milliseconds: 180);
+  static const Duration motionDurationNormal = Duration(milliseconds: 280);
+  static const Duration motionDurationSlow = Duration(milliseconds: 420);
+
+  static const Curve motionCurveStandard = Curves.easeOutCubic;
+  static const Curve motionCurveEmphasized = Curves.easeOutQuart;
+
   static BorderRadius get radius32 => BorderRadius.circular(superRadius);
 
   static EdgeInsets pagePaddingFor(double width) {

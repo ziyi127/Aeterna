@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:aeterna/core/config/config_manager.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
+import 'package:aeterna/shared/widgets/aeterna_reveal.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
 import 'package:file_selector/file_selector.dart';
@@ -96,22 +97,30 @@ class _SchedulePageState extends State<SchedulePage> {
         padding: AeternaTokens.pagePaddingFor(width),
         child: Column(
           children: [
-            _PlanMetaCard(
-              editMode: _editMode,
-              examTitleController: _examTitleController,
-              messageController: _messageController,
-              dateMode: _dateMode,
-              rangeStart: _rangeStart,
-              rangeEnd: _rangeEnd,
-              selectedDate: _selectedDate,
-              onDateModeChanged: (mode) => setState(() => _dateMode = mode),
-              onPickRangeStart: () => _pickRangeDate(isStart: true),
-              onPickRangeEnd: () => _pickRangeDate(isStart: false),
-              onPickSelectedDate: () => _pickSelectedDate(),
-              onSaveMeta: () => _saveMeta(controller),
+            AeternaReveal(
+              delay: const Duration(milliseconds: 50),
+              child: _PlanMetaCard(
+                editMode: _editMode,
+                examTitleController: _examTitleController,
+                messageController: _messageController,
+                dateMode: _dateMode,
+                rangeStart: _rangeStart,
+                rangeEnd: _rangeEnd,
+                selectedDate: _selectedDate,
+                onDateModeChanged: (mode) => setState(() => _dateMode = mode),
+                onPickRangeStart: () => _pickRangeDate(isStart: true),
+                onPickRangeEnd: () => _pickRangeDate(isStart: false),
+                onPickSelectedDate: () => _pickSelectedDate(),
+                onSaveMeta: () => _saveMeta(controller),
+              ),
             ),
             const SizedBox(height: 12),
-            Expanded(child: _buildExamList(context, controller)),
+            Expanded(
+              child: AeternaReveal(
+                delay: const Duration(milliseconds: 120),
+                child: _buildExamList(context, controller),
+              ),
+            ),
           ],
         ),
       ),
@@ -171,32 +180,35 @@ class _SchedulePageState extends State<SchedulePage> {
         final state = slot.stateAt(controller.now);
         final originalIndex = controller.exams.indexOf(slot);
 
-        return SurfaceCard(
-          child: ListTile(
-            minTileHeight: AeternaTokens.touchMinHeight,
-            contentPadding: EdgeInsets.zero,
-            leading: SizedBox(
-              width: width < 700 ? 90 : 120,
-              child: Text(
-                slot.windowText(),
-                style: Theme.of(context).textTheme.titleMedium,
+        return AeternaReveal(
+          delay: Duration(milliseconds: 40 + index * 35),
+          child: SurfaceCard(
+            child: ListTile(
+              minTileHeight: AeternaTokens.touchMinHeight,
+              contentPadding: EdgeInsets.zero,
+              leading: SizedBox(
+                width: width < 700 ? 90 : 120,
+                child: Text(
+                  slot.windowText(),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
+              title: Text(
+                slot.subject,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              subtitle: _editMode ? const Text('可编辑：点击铅笔修改') : null,
+              trailing: _editMode
+                  ? _EditActions(
+                      onEdit: () => _openEditor(
+                        controller,
+                        existingIndex: originalIndex,
+                        existing: slot,
+                      ),
+                      onDelete: () => controller.removeExam(originalIndex),
+                    )
+                  : _StateBadge(state: state),
             ),
-            title: Text(
-              slot.subject,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            subtitle: _editMode ? const Text('可编辑：点击铅笔修改') : null,
-            trailing: _editMode
-                ? _EditActions(
-                    onEdit: () => _openEditor(
-                      controller,
-                      existingIndex: originalIndex,
-                      existing: slot,
-                    ),
-                    onDelete: () => controller.removeExam(originalIndex),
-                  )
-                : _StateBadge(state: state),
           ),
         );
       },

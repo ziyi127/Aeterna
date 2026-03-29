@@ -94,6 +94,16 @@ abstract final class AppTheme {
 
     return base.copyWith(
       textTheme: text,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: FadeUpwardsPageTransitionsBuilder(),
+        },
+      ),
       appBarTheme: AppBarTheme(
         centerTitle: false,
         elevation: 0,
@@ -120,6 +130,25 @@ abstract final class AppTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(120, AeternaTokens.touchMinHeight),
+          animationDuration: AeternaTokens.motionDurationNormal,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          ),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          minimumSize: const Size(96, AeternaTokens.touchMinHeight),
+          animationDuration: AeternaTokens.motionDurationNormal,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(96, AeternaTokens.touchMinHeight),
+          animationDuration: AeternaTokens.motionDurationNormal,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
           ),
@@ -127,6 +156,7 @@ abstract final class AppTheme {
       ),
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(
+          animationDuration: AeternaTokens.motionDurationNormal,
           minimumSize: WidgetStateProperty.all(
             const Size(48, AeternaTokens.touchMinHeight),
           ),
@@ -139,6 +169,7 @@ abstract final class AppTheme {
       ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(
+          animationDuration: AeternaTokens.motionDurationNormal,
           minimumSize: WidgetStateProperty.all(
             const Size(120, AeternaTokens.touchMinHeight),
           ),

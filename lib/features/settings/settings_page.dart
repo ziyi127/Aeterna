@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:aeterna/core/config/config_manager.dart';
 import 'package:aeterna/core/time/time_source_mode.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
+import 'package:aeterna/shared/widgets/aeterna_reveal.dart';
 import 'package:aeterna/shared/widgets/exit_password_dialog.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/app_theme.dart';
@@ -466,11 +467,13 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: AeternaTokens.pagePaddingFor(width),
           child: ListView(
             children: [
-              SurfaceCard(
-                style: SurfaceCardStyle.elevated,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+              AeternaReveal(
+                delay: const Duration(milliseconds: 60),
+                child: SurfaceCard(
+                  style: SurfaceCardStyle.elevated,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                     Row(
                       children: [
                         const Icon(Icons.schedule_outlined),
@@ -630,27 +633,30 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ],
                     ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 14),
-              SurfaceCard(
-                style: SurfaceCardStyle.elevated,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.slideshow_outlined),
-                        const SizedBox(width: 8),
-                        Text(
-                          '放映参数',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const Spacer(),
-                        if (_displayDirty) const Chip(label: Text('未保存')),
-                      ],
-                    ),
+              AeternaReveal(
+                delay: const Duration(milliseconds: 130),
+                child: SurfaceCard(
+                  style: SurfaceCardStyle.elevated,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.slideshow_outlined),
+                          const SizedBox(width: 8),
+                          Text(
+                            '放映参数',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const Spacer(),
+                          if (_displayDirty) const Chip(label: Text('未保存')),
+                        ],
+                      ),
                     const SizedBox(height: 8),
                     Text(
                       '这里设置试室号与字号倍率。放映页会实时读取此配置。',
@@ -832,6 +838,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ],
                 ),
+              ),
               ),
               const SizedBox(height: 18),
             ],

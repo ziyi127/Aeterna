@@ -798,29 +798,65 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                     ],
                   ),
                 ),
-                if (_activeReminder != null)
-                  Positioned.fill(
-                    child: _ReminderOverlay(payload: _activeReminder!),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: _activeReminder == null,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 420),
+                      reverseDuration: const Duration(milliseconds: 260),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        final fade = CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOutCubic,
+                        );
+                        final scale = Tween<double>(
+                          begin: 0.985,
+                          end: 1.0,
+                        ).animate(fade);
+                        return FadeTransition(
+                          opacity: fade,
+                          child: ScaleTransition(scale: scale, child: child),
+                        );
+                      },
+                      child: _activeReminder == null
+                          ? const SizedBox.shrink(key: ValueKey('reminder_none'))
+                          : _ReminderOverlay(
+                              key: ValueKey<String>(
+                                '${_activeReminder!.title}|${_activeReminder!.subtitle}',
+                              ),
+                              payload: _activeReminder!,
+                            ),
+                    ),
                   ),
+                ),
                 Positioned(
                   right: 12,
                   bottom: 12,
                   child: AnimatedOpacity(
                     duration: const Duration(milliseconds: 220),
                     opacity: _overlayVisible ? 1 : 0,
-                    child: IgnorePointer(
-                      ignoring: !_overlayVisible,
-                      child: _ControlCapsules(
-                        holdProgress:
-                            _holdElapsed.inMilliseconds /
-                            _exitHoldTarget.inMilliseconds,
-                        settingsHoldProgress:
-                            _settingsHoldElapsed.inMilliseconds /
-                            _exitHoldTarget.inMilliseconds,
-                        onExitHoldStart: _startExitHold,
-                        onExitHoldCancel: _cancelExitHold,
-                        onSettingsHoldStart: _startSettingsHold,
-                        onSettingsHoldCancel: _cancelSettingsHold,
+                    child: AnimatedSlide(
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOutCubic,
+                      offset: _overlayVisible
+                          ? Offset.zero
+                          : const Offset(0.0, 0.1),
+                      child: IgnorePointer(
+                        ignoring: !_overlayVisible,
+                        child: _ControlCapsules(
+                          holdProgress:
+                              _holdElapsed.inMilliseconds /
+                              _exitHoldTarget.inMilliseconds,
+                          settingsHoldProgress:
+                              _settingsHoldElapsed.inMilliseconds /
+                              _exitHoldTarget.inMilliseconds,
+                          onExitHoldStart: _startExitHold,
+                          onExitHoldCancel: _cancelExitHold,
+                          onSettingsHoldStart: _startSettingsHold,
+                          onSettingsHoldCancel: _cancelSettingsHold,
+                        ),
                       ),
                     ),
                   ),
@@ -1479,6 +1515,7 @@ class _HoldCircleButton extends StatelessWidget {
     return Listener(
       onPointerDown: (_) => onHoldStart(),
       onPointerUp: (_) => onHoldCancel(),
+      onPointerCancel: (_) => onHoldCancel(),
       behavior: HitTestBehavior.opaque,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
@@ -1566,7 +1603,7 @@ class _ReminderPayload {
 }
 
 class _ReminderOverlay extends StatelessWidget {
-  const _ReminderOverlay({required this.payload});
+  const _ReminderOverlay({super.key, required this.payload});
 
   final _ReminderPayload payload;
 

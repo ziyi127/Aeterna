@@ -9,6 +9,7 @@ import 'package:aeterna/features/schedule/schedule_page.dart';
 import 'package:aeterna/features/settings/settings_page.dart';
 import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/theme/app_theme.dart';
+import 'package:aeterna/theme/design_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -197,6 +198,8 @@ class _AeternaAppState extends State<AeternaApp> {
       child: MaterialApp(
         title: '恒时 Aeterna',
         debugShowCheckedModeBanner: false,
+        themeAnimationDuration: AeternaTokens.motionDurationSlow,
+        themeAnimationCurve: AeternaTokens.motionCurveStandard,
         theme: AppTheme.light(_themePalette),
         darkTheme: AppTheme.dark(_themePalette),
         themeMode: _themeMode,

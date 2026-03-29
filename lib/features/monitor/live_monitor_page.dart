@@ -59,9 +59,14 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   @override
   void initState() {
     super.initState();
-    _enterPresentationMode();
     _loadDisplaySettings();
     _showControlsTemporarily();
+    // Delay presentation mode entry until window is fully initialized (post-frame).
+    // This prevents null-pointer crashes on macOS when querying window state before
+    // the platform window is fully created.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _enterPresentationMode();
+    });
   }
 
   @override
@@ -157,25 +162,37 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
     // Step 1: Try fullscreen first for immersive presentation.
     try {
-      _wasFullscreen = await windowManager.isFullScreen();
+      // Safely query fullscreen state, defaulting to false if window is unavailable.
+      _wasFullscreen = await windowManager.isFullScreen().timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () => false,
+      );
       if (!_wasFullscreen) {
         await windowManager.setFullScreen(true);
         _enteredFullscreen = true;
       }
     } catch (_) {
       // Ignore unsupported fullscreen behavior and continue with top-most mode.
+      // Window may not be fully initialized yet on some platforms.
+      _wasFullscreen = false;
     }
 
     // Step 2: Cross-platform top-most fallback (uiAccess-like behavior).
     if (isDesktop) {
       try {
-        _wasAlwaysOnTop = await windowManager.isAlwaysOnTop();
+        // Safely query always-on-top state, defaulting to false if window is unavailable.
+        _wasAlwaysOnTop = await windowManager.isAlwaysOnTop().timeout(
+          const Duration(milliseconds: 500),
+          onTimeout: () => false,
+        );
         if (!_wasAlwaysOnTop) {
           await windowManager.setAlwaysOnTop(true);
           _enteredAlwaysOnTop = true;
         }
       } catch (_) {
         // Ignore unsupported always-on-top behavior.
+        // Window may not be fully initialized yet on some platforms.
+        _wasAlwaysOnTop = false;
       }
 
       try {

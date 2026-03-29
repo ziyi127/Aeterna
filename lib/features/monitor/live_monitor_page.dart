@@ -5,10 +5,12 @@ import 'dart:math' as math;
 import 'package:aeterna/core/config/config_manager.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
+import 'package:aeterna/shared/widgets/exit_password_dialog.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/design_tokens.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 class LiveMonitorPage extends StatefulWidget {
@@ -19,6 +21,10 @@ class LiveMonitorPage extends StatefulWidget {
 }
 
 class _LiveMonitorPageState extends State<LiveMonitorPage> {
+  static const String _defaultExamInfo = '认真考试，仔细检查';
+  static const MethodChannel _windowSecurityChannel = MethodChannel(
+    'aeterna/window_security',
+  );
   static const Duration _overlayVisibleDuration = Duration(seconds: 3);
   static const Duration _exitHoldTarget = Duration(seconds: 5);
   static const Duration _reminderShowDuration = Duration(seconds: 4);
@@ -42,6 +48,8 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   bool _wasFullscreen = false;
   bool _wasAlwaysOnTop = false;
   bool _enteredAlwaysOnTop = false;
+  bool _windowsUiAccessEnabled = false;
+  Timer? _desktopLockKeepAliveTimer;
 
   TimerController? _boundController;
   final Set<String> _firedReminderKeys = <String>{};
@@ -75,8 +83,60 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     _exitHoldTimer?.cancel();
     _settingsHoldTimer?.cancel();
     _reminderTimer?.cancel();
+    _desktopLockKeepAliveTimer?.cancel();
     _leavePresentationMode();
     super.dispose();
+  }
+
+  Future<bool> _isWindowsUiAccessEnabled() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return false;
+    }
+    try {
+      final result = await _windowSecurityChannel.invokeMethod<bool>(
+        'isUiAccessEnabled',
+      );
+      return result == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _startDesktopLockKeepAlive() {
+    if (kIsWeb) {
+      return;
+    }
+
+    final isDesktop =
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    if (!isDesktop) {
+      return;
+    }
+
+    // Windows without UIAccess uses degraded strategy:
+    // keep forcing fullscreen + top-most + focus to reduce overlay loss.
+    final isWindowsWithoutUiAccess =
+        defaultTargetPlatform == TargetPlatform.windows &&
+        !_windowsUiAccessEnabled;
+    final keepAliveInterval = isWindowsWithoutUiAccess
+        ? const Duration(milliseconds: 500)
+        : const Duration(milliseconds: 900);
+
+    _desktopLockKeepAliveTimer?.cancel();
+    _desktopLockKeepAliveTimer = Timer.periodic(
+      keepAliveInterval,
+      (_) async {
+        try {
+          await windowManager.setFullScreen(true);
+          await windowManager.setAlwaysOnTop(true);
+          await windowManager.focus();
+        } catch (_) {
+          // Ignore unsupported behavior.
+        }
+      },
+    );
   }
 
   void _onControllerTick() {
@@ -84,41 +144,76 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   Future<void> _enterPresentationMode() async {
+    if (kIsWeb) {
+      return;
+    }
+
+    final isDesktop =
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+
+    _windowsUiAccessEnabled = await _isWindowsUiAccessEnabled();
+
+    // Step 1: Try fullscreen first for immersive presentation.
     try {
       _wasFullscreen = await windowManager.isFullScreen();
       if (!_wasFullscreen) {
         await windowManager.setFullScreen(true);
         _enteredFullscreen = true;
       }
+    } catch (_) {
+      // Ignore unsupported fullscreen behavior and continue with top-most mode.
+    }
 
-      // Windows only: simulate uiAccess-like presentation lock by forcing
-      // top-most + focus while monitor page is active.
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+    // Step 2: Cross-platform top-most fallback (uiAccess-like behavior).
+    if (isDesktop) {
+      try {
         _wasAlwaysOnTop = await windowManager.isAlwaysOnTop();
         if (!_wasAlwaysOnTop) {
           await windowManager.setAlwaysOnTop(true);
           _enteredAlwaysOnTop = true;
         }
-        await windowManager.focus();
+      } catch (_) {
+        // Ignore unsupported always-on-top behavior.
       }
-    } catch (_) {
-      // Ignore unsupported platforms.
+
+      try {
+        await windowManager.focus();
+      } catch (_) {
+        // Ignore unsupported focus behavior.
+      }
+
+      _startDesktopLockKeepAlive();
     }
   }
 
   Future<void> _leavePresentationMode() async {
-    try {
-      if (!kIsWeb &&
-          defaultTargetPlatform == TargetPlatform.windows &&
-          _enteredAlwaysOnTop) {
+    if (kIsWeb) {
+      return;
+    }
+
+    _desktopLockKeepAliveTimer?.cancel();
+    _desktopLockKeepAliveTimer = null;
+
+    // Restore always-on-top state first.
+    if (_enteredAlwaysOnTop) {
+      try {
         await windowManager.setAlwaysOnTop(false);
         _enteredAlwaysOnTop = false;
+      } catch (_) {
+        // Ignore unsupported always-on-top behavior.
       }
-      if (_enteredFullscreen) {
+    }
+
+    // Restore fullscreen state.
+    if (_enteredFullscreen) {
+      try {
         await windowManager.setFullScreen(false);
+        _enteredFullscreen = false;
+      } catch (_) {
+        // Ignore unsupported fullscreen behavior.
       }
-    } catch (_) {
-      // Ignore unsupported platforms.
     }
   }
 
@@ -246,6 +341,22 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       _isHoldingSettings = false;
       _settingsHoldElapsed = Duration.zero;
     });
+
+    final needsPassword =
+        _settings.exitPasswordEnabled && _settings.exitPassword.isNotEmpty;
+    if (needsPassword) {
+      final result = await ExitPasswordDialog.show(context);
+      if (!mounted) {
+        return;
+      }
+      if (result != _settings.exitPassword) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('密码错误，无法打开设置')));
+        return;
+      }
+    }
+
     await _openDisplaySettingsDialog();
   }
 
@@ -259,6 +370,33 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       _isHoldingExit = false;
       _holdElapsed = Duration.zero;
     });
+
+    final controller = _boundController ?? TimerScope.of(context);
+    final planStart = controller.planStartDate;
+    final planEnd = controller.planEndDate;
+    final isInExamPeriod =
+      planStart != null &&
+      planEnd != null &&
+      !controller.now.isBefore(planStart) &&
+      controller.now.isBefore(planEnd.add(const Duration(days: 1)));
+    final bypassBySafeMode = _settings.safeMode && isInExamPeriod;
+    final needsPassword =
+        _settings.exitPasswordEnabled &&
+        _settings.exitPassword.isNotEmpty &&
+        !bypassBySafeMode;
+
+    if (needsPassword) {
+      final result = await ExitPasswordDialog.show(context);
+      if (!mounted) {
+        return;
+      }
+      if (result != _settings.exitPassword) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('密码错误，无法退出')));
+        return;
+      }
+    }
 
     await _leavePresentationMode();
     if (!mounted) {
@@ -310,10 +448,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                 FilledButton(
                   onPressed: () {
                     Navigator.of(ctx).pop(
-                      DisplaySettings(
-                        fontScale: localScale,
-                        roomLabel: _settings.roomLabel,
-                      ),
+                      _settings.copyWith(fontScale: localScale),
                     );
                   },
                   child: const Text('保存'),
@@ -443,6 +578,13 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     final shortestSide = math.min(viewport.width, viewport.height);
     final panelScale = _settings.fontScale.clamp(0.7, 1.8);
     final panelGap = (shortestSide * 0.012).clamp(8.0, 18.0).toDouble();
+    final planExamInfo = controller.exams
+      .map((e) => e.message.trim())
+      .firstWhere((m) => m.isNotEmpty, orElse: () => _defaultExamInfo);
+    final currentExamInfo =
+      controller.activeExam?.message.trim().isNotEmpty == true
+      ? controller.activeExam!.message.trim()
+      : planExamInfo;
 
     return Listener(
       onPointerDown: (_) => _showControlsTemporarily(),
@@ -464,8 +606,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                     children: [
                       _TopInfoBar(
                         examTitle: controller.examTitle,
-                        currentExam:
-                            controller.activeExam?.subject ?? '当前无进行中考试',
+                        examInfo: currentExamInfo,
                         roomLabel: _settings.roomLabel,
                         fontScale: _settings.fontScale,
                         compact: viewport.width < 980 || viewport.height < 640,
@@ -619,14 +760,14 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 class _TopInfoBar extends StatelessWidget {
   const _TopInfoBar({
     required this.examTitle,
-    required this.currentExam,
+    required this.examInfo,
     required this.roomLabel,
     required this.fontScale,
     required this.compact,
   });
 
   final String examTitle;
-  final String currentExam;
+  final String examInfo;
   final String roomLabel;
   final double fontScale;
   final bool compact;
@@ -648,7 +789,7 @@ class _TopInfoBar extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '当前科目: $currentExam',
+            '考试信息: $examInfo',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
               fontSize: (18 * fontScale).clamp(11, 28),
               fontWeight: FontWeight.w700,
@@ -685,7 +826,7 @@ class _TopInfoBar extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
               Text(
-                '当前科目: $currentExam',
+                '考试信息: $examInfo',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   fontSize: (20 * fontScale).clamp(12, 32),
                   fontWeight: FontWeight.w700,
@@ -758,6 +899,7 @@ class _SubjectPanel extends StatelessWidget {
     final isNearEnd = controller.isNearEnd;
     final scheme = Theme.of(context).colorScheme;
     final textColor = isNearEnd ? Colors.red : scheme.onSurface;
+    final activeExam = controller.activeExam;
 
     return SurfaceCard(
       style: isNearEnd ? SurfaceCardStyle.elevated : SurfaceCardStyle.filled,
@@ -783,14 +925,72 @@ class _SubjectPanel extends StatelessWidget {
               const SizedBox(height: 8),
               Expanded(
                 child: Center(
-                  child: Text(
-                    controller.subjectLabel,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      fontSize: isNearEnd ? titleSize + 10 : titleSize,
-                      fontWeight: FontWeight.w900,
-                      color: textColor,
-                    ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        controller.subjectLabel,
+                        textAlign: TextAlign.center,
+                        style:
+                            Theme.of(context).textTheme.displaySmall?.copyWith(
+                          fontSize: isNearEnd ? titleSize + 10 : titleSize,
+                          fontWeight: FontWeight.w900,
+                          color: textColor,
+                        ),
+                      ),
+                      // 显示材料列表
+                      if (activeExam != null && activeExam.materials.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 1.5,
+                                height: 16,
+                                color: scheme.outline.withValues(alpha: 0.3),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                alignment: WrapAlignment.center,
+                                spacing: 8,
+                                runSpacing: 6,
+                                children: [
+                                  for (final material in activeExam.materials)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            scheme.primaryContainer
+                                                .withValues(alpha: 0.4),
+                                        borderRadius:
+                                            BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: scheme.primary
+                                              .withValues(alpha: 0.4),
+                                          width: 0.5,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        material.toDisplayString(),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                          fontSize: (11 * fontScale)
+                                              .clamp(7, 16),
+                                          color: scheme.onPrimaryContainer,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),

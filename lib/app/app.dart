@@ -5,8 +5,8 @@ import 'package:aeterna/core/time/timer_controller.dart';
 import 'package:aeterna/features/home/about_page.dart';
 import 'package:aeterna/features/home/home_launcher_page.dart';
 import 'package:aeterna/features/monitor/live_monitor_page.dart';
-import 'package:aeterna/features/schedule/schedule_viewer_page.dart';
-import 'package:aeterna/features/settings/ntp_config_page.dart';
+import 'package:aeterna/features/schedule/schedule_page.dart';
+import 'package:aeterna/features/settings/settings_page.dart';
 import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -196,8 +196,8 @@ class _AeternaAppState extends State<AeternaApp> {
         home: const HomeLauncherPage(),
         routes: {
           '/monitor': (_) => const LiveMonitorPage(),
-          '/schedule': (_) => const ScheduleViewerPage(),
-          '/settings': (_) => NtpConfigPage(
+          '/schedule': (_) => const SchedulePage(),
+          '/settings': (_) => SettingsPage(
             currentThemeMode: _themeMode,
             currentThemePalette: _themePalette,
             onThemeChanged: _updateTheme,

@@ -2,6 +2,10 @@
 
 #include <optional>
 
+#include <memory>
+
+#include <Windows.h>
+
 #include "flutter/generated_plugin_registrant.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -25,6 +29,23 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  window_security_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "aeterna/window_security",
+          &flutter::StandardMethodCodec::GetInstance());
+  window_security_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "isUiAccessEnabled") {
+          result->Success(flutter::EncodableValue(IsUiAccessEnabled()));
+          return;
+        }
+        result->NotImplemented();
+      });
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +61,10 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (window_security_channel_) {
+    window_security_channel_.reset();
+  }
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -68,4 +93,22 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+bool FlutterWindow::IsUiAccessEnabled() const {
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    return false;
+  }
+
+  DWORD ui_access = 0;
+  DWORD returned_length = 0;
+  const BOOL ok = GetTokenInformation(token, TokenUIAccess, &ui_access,
+                                      sizeof(ui_access), &returned_length);
+  CloseHandle(token);
+
+  if (!ok) {
+    return false;
+  }
+  return ui_access != 0;
 }

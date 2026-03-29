@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:aeterna/core/config/exam_aware_2_parser.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/time_source_mode.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,6 +29,9 @@ class ExamPlanConfig {
               'subject': e.subject,
               'start': e.start.toIso8601String(),
               'end': e.end.toIso8601String(),
+              if (e.materials.isNotEmpty)
+                'materials': e.materials.map((m) => m.toJson()).toList(),
+              if (e.message.isNotEmpty) 'message': e.message,
             },
           )
           .toList(),
@@ -38,11 +42,21 @@ class ExamPlanConfig {
     final examsRaw = (json['exams'] as List?) ?? const [];
     final exams = examsRaw
         .map(
-          (item) => ExamSlot(
-            subject: item['subject'] as String,
-            start: DateTime.parse(item['start'] as String),
-            end: DateTime.parse(item['end'] as String),
-          ),
+          (item) {
+            final materialsRaw = (item['materials'] as List?) ?? const [];
+            final materials = materialsRaw
+                .map(
+                  (m) => ExamMaterial.fromJson(m as Map<String, dynamic>),
+                )
+                .toList();
+            return ExamSlot(
+              subject: item['subject'] as String,
+              start: DateTime.parse(item['start'] as String),
+              end: DateTime.parse(item['end'] as String),
+              materials: materials,
+              message: (item['message'] as String?) ?? '',
+            );
+          },
         )
         .toList();
 
@@ -98,6 +112,9 @@ class DisplaySettings {
     this.themeMode = 'system',
     this.themePalette = 'emerald',
     this.maxDriftStepMs = 250,
+    this.exitPasswordEnabled = false,
+    this.exitPassword = '',
+    this.safeMode = false,
   });
 
   final double fontScale;
@@ -105,6 +122,9 @@ class DisplaySettings {
   final String themeMode;
   final String themePalette;
   final int maxDriftStepMs;
+  final bool exitPasswordEnabled;
+  final String exitPassword;
+  final bool safeMode;
 
   DisplaySettings copyWith({
     double? fontScale,
@@ -112,6 +132,9 @@ class DisplaySettings {
     String? themeMode,
     String? themePalette,
     int? maxDriftStepMs,
+    bool? exitPasswordEnabled,
+    String? exitPassword,
+    bool? safeMode,
   }) {
     return DisplaySettings(
       fontScale: fontScale ?? this.fontScale,
@@ -119,6 +142,9 @@ class DisplaySettings {
       themeMode: themeMode ?? this.themeMode,
       themePalette: themePalette ?? this.themePalette,
       maxDriftStepMs: maxDriftStepMs ?? this.maxDriftStepMs,
+      exitPasswordEnabled: exitPasswordEnabled ?? this.exitPasswordEnabled,
+      exitPassword: exitPassword ?? this.exitPassword,
+      safeMode: safeMode ?? this.safeMode,
     );
   }
 
@@ -129,6 +155,9 @@ class DisplaySettings {
       'themeMode': themeMode,
       'themePalette': themePalette,
       'maxDriftStepMs': maxDriftStepMs,
+      'exitPasswordEnabled': exitPasswordEnabled,
+      'exitPassword': exitPassword,
+      'safeMode': safeMode,
     };
   }
 
@@ -145,6 +174,9 @@ class DisplaySettings {
           ? (json['themePalette'] as String).trim()
           : 'emerald',
       maxDriftStepMs: (json['maxDriftStepMs'] as num?)?.toInt() ?? 250,
+      exitPasswordEnabled: (json['exitPasswordEnabled'] as bool?) ?? false,
+      exitPassword: (json['exitPassword'] as String?) ?? '',
+      safeMode: (json['safeMode'] as bool?) ?? false,
     );
   }
 }
@@ -197,6 +229,9 @@ class ConfigManager {
             'subject': e.subject,
             'start': e.start.toIso8601String(),
             'end': e.end.toIso8601String(),
+            if (e.materials.isNotEmpty)
+              'materials': e.materials.map((m) => m.toJson()).toList(),
+            if (e.message.isNotEmpty) 'message': e.message,
           },
         )
         .toList();
@@ -207,11 +242,21 @@ class ConfigManager {
     final list = raw as List;
     return list
         .map(
-          (item) => ExamSlot(
-            subject: item['subject'] as String,
-            start: DateTime.parse(item['start'] as String),
-            end: DateTime.parse(item['end'] as String),
-          ),
+          (item) {
+            final materialsRaw = (item['materials'] as List?) ?? const [];
+            final materials = materialsRaw
+                .map(
+                  (m) => ExamMaterial.fromJson(m as Map<String, dynamic>),
+                )
+                .toList();
+            return ExamSlot(
+              subject: item['subject'] as String,
+              start: DateTime.parse(item['start'] as String),
+              end: DateTime.parse(item['end'] as String),
+              materials: materials,
+              message: (item['message'] as String?) ?? '',
+            );
+          },
         )
         .toList();
   }
@@ -297,6 +342,14 @@ class ConfigManager {
   static ExamPlanConfig? importPlanFromJson(String jsonStr) {
     try {
       final decoded = jsonDecode(jsonStr);
+      
+      // 尝试检测 ExamAware2 格式
+      if (decoded is Map<String, dynamic> && 
+          ExamAware2Parser.isExamAware2Format(decoded)) {
+        return _importFromExamAware2(decoded);
+      }
+      
+      // 原生 Aeterna 格式处理
       if (decoded is List) {
         final exams = _decodeExams(decoded);
         if (exams.isEmpty) {
@@ -313,6 +366,45 @@ class ConfigManager {
         return ExamPlanConfig.fromJson(decoded);
       }
       return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 从 ExamAware2 格式导入计划
+  static ExamPlanConfig? _importFromExamAware2(Map<String, dynamic> json) {
+    try {
+      final config = ExamAware2Config.fromJson(json);
+      if (!config.isValid()) {
+        return null;
+      }
+      
+      // 转换 ExamAware2 信息为 ExamSlot
+      final exams = <ExamSlot>[];
+      for (final info in config.examInfos) {
+        try {
+          final slot = info.toExamSlot(message: config.message);
+          exams.add(slot);
+        } catch (_) {
+          // 跳过无效的考试信息
+        }
+      }
+      
+      if (exams.isEmpty) {
+        return null;
+      }
+      
+      // 推断日期范围
+      exams.sort((a, b) => a.start.compareTo(b.start));
+      final startDate = _dateOnly(exams.first.start);
+      final endDate = _dateOnly(exams.last.end);
+      
+      return ExamPlanConfig(
+        examTitle: config.examName,
+        startDate: startDate,
+        endDate: endDate,
+        exams: exams,
+      );
     } catch (_) {
       return null;
     }

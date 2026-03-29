@@ -10,19 +10,21 @@ import 'package:flutter/material.dart';
 
 enum _DateMode { singleDay, multiDay }
 
-class ScheduleViewerPage extends StatefulWidget {
-  const ScheduleViewerPage({super.key});
+class SchedulePage extends StatefulWidget {
+  const SchedulePage({super.key});
 
   @override
-  State<ScheduleViewerPage> createState() => _ScheduleViewerPageState();
+  State<SchedulePage> createState() => _SchedulePageState();
 }
 
-class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
+class _SchedulePageState extends State<SchedulePage> {
+  static const String _defaultExamInfo = '认真考试，仔细检查';
   bool _editMode = true;
   bool _seededMeta = false;
 
   late DateTime _selectedDate;
   late final TextEditingController _examTitleController;
+  late final TextEditingController _messageController;
 
   _DateMode _dateMode = _DateMode.singleDay;
   DateTime? _rangeStart;
@@ -33,11 +35,13 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
     super.initState();
     _selectedDate = DateTime.now();
     _examTitleController = TextEditingController();
+    _messageController = TextEditingController();
   }
 
   @override
   void dispose() {
     _examTitleController.dispose();
+    _messageController.dispose();
     super.dispose();
   }
 
@@ -65,6 +69,11 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
             icon: const Icon(Icons.folder_open_outlined),
           ),
           IconButton(
+            tooltip: '从友商导入 (EA2)',
+            onPressed: () => _importFromFile(controller, examAwareOnly: true),
+            icon: const Icon(Icons.file_download_outlined),
+          ),
+          IconButton(
             tooltip: '导出 JSON',
             onPressed: () => _exportToFile(controller),
             icon: const Icon(Icons.save_alt_outlined),
@@ -90,6 +99,7 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
             _PlanMetaCard(
               editMode: _editMode,
               examTitleController: _examTitleController,
+              messageController: _messageController,
               dateMode: _dateMode,
               rangeStart: _rangeStart,
               rangeEnd: _rangeEnd,
@@ -124,6 +134,10 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
         controller.planEndDate ?? _inferEndDate(controller.exams) ?? start;
 
     _examTitleController.text = controller.examTitle;
+    _messageController.text =
+      controller.exams
+        .map((e) => e.message.trim())
+        .firstWhere((m) => m.isNotEmpty, orElse: () => '');
     _rangeStart = start;
     _rangeEnd = end;
     _selectedDate = _clampDate(_selectedDate, start, end);
@@ -243,11 +257,19 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
 
   void _saveMeta(TimerController controller) {
     final title = _examTitleController.text.trim();
+    final message = _messageController.text.trim();
     final now = DateTime.now();
     final start = _rangeStart ?? _dateOnly(now);
     final end = _dateMode == _DateMode.singleDay ? start : (_rangeEnd ?? start);
 
     controller.setExamMeta(examTitle: title, startDate: start, endDate: end);
+    if (controller.exams.isNotEmpty) {
+      final updated =
+          controller.exams
+              .map((slot) => slot.copyWith(message: message))
+              .toList(growable: false);
+      controller.replaceAllExams(updated);
+    }
 
     setState(() {
       _rangeStart = start;
@@ -309,11 +331,17 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
     }
   }
 
-  Future<void> _importFromFile(TimerController controller) async {
+  Future<void> _importFromFile(
+    TimerController controller, {
+    bool examAwareOnly = false,
+  }) async {
     try {
       final file = await openFile(
-        acceptedTypeGroups: const [
-          XTypeGroup(label: 'JSON', extensions: ['json']),
+        acceptedTypeGroups: [
+          if (examAwareOnly)
+            const XTypeGroup(label: 'ExamAware2', extensions: ['ea2', 'json'])
+          else
+            const XTypeGroup(label: 'JSON', extensions: ['json', 'ea2']),
         ],
       );
       if (file == null || !mounted) {
@@ -332,6 +360,17 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
         return;
       }
 
+      if (examAwareOnly &&
+          !plan.exams.any((e) => e.message.trim().isNotEmpty)) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('该文件不是有效的友商 EA2 格式或缺少 message 字段')),
+        );
+        return;
+      }
+
       controller.setExamMeta(
         examTitle: plan.examTitle,
         startDate: plan.startDate,
@@ -341,6 +380,10 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
 
       setState(() {
         _examTitleController.text = plan.examTitle;
+        _messageController.text =
+            plan.exams
+                .map((e) => e.message.trim())
+                .firstWhere((m) => m.isNotEmpty, orElse: () => '');
         _rangeStart = plan.startDate;
         _rangeEnd = plan.endDate;
         _selectedDate = _clampDate(_selectedDate, plan.startDate, plan.endDate);
@@ -352,9 +395,13 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
       if (!mounted) {
         return;
       }
+      final examCount = plan.exams.length;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('配置导入成功: ${file.name}')));
+      ).showSnackBar(SnackBar(
+        content: Text('✓ 导入成功: ${file.name} ($examCount科考试)'),
+        duration: const Duration(seconds: 3),
+      ));
     } catch (_) {
       if (!mounted) {
         return;
@@ -393,9 +440,20 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
     }
 
     if (existingIndex == null) {
-      controller.addExam(result);
+      final metaMessage = _messageController.text.trim();
+      controller.addExam(
+        result.copyWith(
+          message: metaMessage.isEmpty ? _defaultExamInfo : metaMessage,
+        ),
+      );
     } else {
-      controller.updateExam(existingIndex, result);
+      final metaMessage = _messageController.text.trim();
+      controller.updateExam(
+        existingIndex,
+        result.copyWith(
+          message: metaMessage.isEmpty ? _defaultExamInfo : metaMessage,
+        ),
+      );
     }
   }
 
@@ -431,6 +489,7 @@ class _ScheduleViewerPageState extends State<ScheduleViewerPage> {
 
     setState(() {
       _examTitleController.text = newTitle;
+      _messageController.text = '';
       _rangeStart = today;
       _rangeEnd = today;
       _selectedDate = today;
@@ -491,6 +550,7 @@ class _PlanMetaCard extends StatelessWidget {
   const _PlanMetaCard({
     required this.editMode,
     required this.examTitleController,
+    required this.messageController,
     required this.dateMode,
     required this.rangeStart,
     required this.rangeEnd,
@@ -504,6 +564,7 @@ class _PlanMetaCard extends StatelessWidget {
 
   final bool editMode;
   final TextEditingController examTitleController;
+  final TextEditingController messageController;
   final _DateMode dateMode;
   final DateTime? rangeStart;
   final DateTime? rangeEnd;
@@ -533,6 +594,16 @@ class _PlanMetaCard extends StatelessWidget {
               labelText: '考试名称',
               hintText: '例如：XX学校3月月考 / XX学校期末考',
             ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: messageController,
+            enabled: editMode,
+            decoration: const InputDecoration(
+              labelText: '考试信息（可选）',
+              hintText: '例如：高二年级 / 班级名称 / 其他备注',
+            ),
+            maxLines: 1,
           ),
           const SizedBox(height: 12),
           SegmentedButton<_DateMode>(
@@ -626,6 +697,7 @@ class _ExamEditDialogState extends State<_ExamEditDialog> {
   late final TextEditingController _subjectController;
   late TimeOfDay _startTime;
   late TimeOfDay _endTime;
+  late List<ExamMaterial> _materials;
 
   @override
   void initState() {
@@ -636,6 +708,7 @@ class _ExamEditDialogState extends State<_ExamEditDialog> {
     _endTime = _toTime(
       existing?.end ?? DateTime.now().add(const Duration(hours: 1)),
     );
+    _materials = List.of(existing?.materials ?? []);
   }
 
   @override
@@ -648,31 +721,77 @@ class _ExamEditDialogState extends State<_ExamEditDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.existing == null ? '新增科目' : '编辑科目'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('日期: ${_fmtDate(widget.date)}'),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _subjectController,
-              decoration: const InputDecoration(labelText: '科目名'),
-            ),
-            const SizedBox(height: 14),
-            _TimeRow(
-              label: '开始时间',
-              value: _fmt(_startTime),
-              onTap: () => _pickTime(true),
-            ),
-            const SizedBox(height: 10),
-            _TimeRow(
-              label: '结束时间',
-              value: _fmt(_endTime),
-              onTap: () => _pickTime(false),
-            ),
-          ],
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('日期: ${_fmtDate(widget.date)}'),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _subjectController,
+                decoration: const InputDecoration(labelText: '科目名'),
+              ),
+              const SizedBox(height: 14),
+              _TimeRow(
+                label: '开始时间',
+                value: _fmt(_startTime),
+                onTap: () => _pickTime(true),
+              ),
+              const SizedBox(height: 10),
+              _TimeRow(
+                label: '结束时间',
+                value: _fmt(_endTime),
+                onTap: () => _pickTime(false),
+              ),
+              const SizedBox(height: 20),
+              // 材料管理部分
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '考试材料',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  IconButton.filled(
+                    onPressed: _addMaterial,
+                    icon: const Icon(Icons.add),
+                    iconSize: 20,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (_materials.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    '暂无材料',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                )
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _materials.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final material = _materials[index];
+                    return _MaterialRow(
+                      material: material,
+                      onEdit: () => _editMaterial(index),
+                      onDelete: () => _deleteMaterial(index),
+                    );
+                  },
+                ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -683,6 +802,42 @@ class _ExamEditDialogState extends State<_ExamEditDialog> {
         FilledButton(onPressed: _save, child: const Text('保存')),
       ],
     );
+  }
+
+  void _addMaterial() {
+    showDialog<ExamMaterial>(
+      context: context,
+      builder: (_) => _MaterialEditDialog(
+        material: null,
+      ),
+    ).then((material) {
+      if (material != null) {
+        setState(() {
+          _materials.add(material);
+        });
+      }
+    });
+  }
+
+  void _editMaterial(int index) {
+    showDialog<ExamMaterial>(
+      context: context,
+      builder: (_) => _MaterialEditDialog(
+        material: _materials[index],
+      ),
+    ).then((material) {
+      if (material != null) {
+        setState(() {
+          _materials[index] = material;
+        });
+      }
+    });
+  }
+
+  void _deleteMaterial(int index) {
+    setState(() {
+      _materials.removeAt(index);
+    });
   }
 
   Future<void> _pickTime(bool isStart) async {
@@ -730,7 +885,13 @@ class _ExamEditDialogState extends State<_ExamEditDialog> {
 
     Navigator.of(
       context,
-    ).pop(ExamSlot(subject: subject, start: start, end: end));
+    ).pop(ExamSlot(
+      subject: subject,
+      start: start,
+      end: end,
+      materials: _materials,
+      message: widget.existing?.message ?? '',
+    ));
   }
 
   TimeOfDay _toTime(DateTime dt) => TimeOfDay(hour: dt.hour, minute: dt.minute);
@@ -768,6 +929,169 @@ class _TimeRow extends StatelessWidget {
         FilledButton.tonal(onPressed: onTap, child: Text(value)),
       ],
     );
+  }
+}
+
+/// 材料行小部件
+class _MaterialRow extends StatelessWidget {
+  const _MaterialRow({
+    required this.material,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final ExamMaterial material;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  material.name,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  '${material.quantity}${material.unit}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined),
+            iconSize: 18,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            tooltip: '编辑',
+          ),
+          IconButton(
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline),
+            iconSize: 18,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            tooltip: '删除',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 材料编辑对话框
+class _MaterialEditDialog extends StatefulWidget {
+  const _MaterialEditDialog({required this.material});
+
+  final ExamMaterial? material;
+
+  @override
+  State<_MaterialEditDialog> createState() => _MaterialEditDialogState();
+}
+
+class _MaterialEditDialogState extends State<_MaterialEditDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _quantityController;
+  late final TextEditingController _unitController;
+
+  @override
+  void initState() {
+    super.initState();
+    final material = widget.material;
+    _nameController = TextEditingController(text: material?.name ?? '');
+    _quantityController = TextEditingController(text: (material?.quantity ?? 1).toString());
+    _unitController = TextEditingController(text: material?.unit ?? '份');
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _quantityController.dispose();
+    _unitController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.material == null ? '新增材料' : '编辑材料'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: '材料名称'),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  flex: 1,
+                  child: TextField(
+                    controller: _quantityController,
+                    decoration: const InputDecoration(labelText: '数量'),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 1,
+                  child: TextField(
+                    controller: _unitController,
+                    decoration: const InputDecoration(labelText: '单位'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+
+  void _save() {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      return;
+    }
+
+    final quantity = int.tryParse(_quantityController.text) ?? 1;
+    final unit = _unitController.text.trim().isEmpty ? '份' : _unitController.text.trim();
+
+    Navigator.of(context).pop(ExamMaterial(
+      name: name,
+      quantity: quantity,
+      unit: unit,
+    ));
   }
 }
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:aeterna/core/config/config_manager.dart';
 import 'package:aeterna/core/time/time_source_mode.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
+import 'package:aeterna/shared/widgets/exit_password_dialog.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/app_theme.dart';
 import 'package:aeterna/theme/design_tokens.dart';
@@ -10,8 +11,8 @@ import 'package:flutter/material.dart';
 
 enum _LeaveAction { save, discard, cancel }
 
-class NtpConfigPage extends StatefulWidget {
-  const NtpConfigPage({
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({
     super.key,
     required this.currentThemeMode,
     required this.currentThemePalette,
@@ -27,10 +28,10 @@ class NtpConfigPage extends StatefulWidget {
   onThemeChanged;
 
   @override
-  State<NtpConfigPage> createState() => _NtpConfigPageState();
+  State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _NtpConfigPageState extends State<NtpConfigPage> {
+class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _ntpController;
   late final TextEditingController _roomController;
   bool _seededFromState = false;
@@ -49,6 +50,12 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
   ThemeMode _initialThemeMode = ThemeMode.system;
   ThemePalette _initialThemePalette = ThemePalette.emerald;
   TimeSourceMode _lastModeHint = TimeSourceMode.offlineManual;
+  bool _exitPasswordEnabled = false;
+  bool _safeMode = false;
+  String _exitPassword = '';
+  bool _initialExitPasswordEnabled = false;
+  bool _initialSafeMode = false;
+  String _initialExitPassword = '';
 
   @override
   void initState() {
@@ -122,6 +129,12 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
       _themePalette = ThemePaletteLabel.fromKey(settings.themePalette);
       _initialThemeMode = _themeMode;
       _initialThemePalette = _themePalette;
+      _exitPasswordEnabled = settings.exitPasswordEnabled;
+      _safeMode = settings.safeMode;
+      _exitPassword = settings.exitPassword;
+      _initialExitPasswordEnabled = settings.exitPasswordEnabled;
+      _initialSafeMode = settings.safeMode;
+      _initialExitPassword = settings.exitPassword;
     });
   }
 
@@ -163,7 +176,10 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
         (_fontScale - _initialFontScale).abs() > 0.0001 ||
         _maxDriftStepMs != _initialMaxDriftStepMs ||
         _themeMode != _initialThemeMode ||
-        _themePalette != _initialThemePalette;
+      _themePalette != _initialThemePalette ||
+      _exitPasswordEnabled != _initialExitPasswordEnabled ||
+      _safeMode != _initialSafeMode ||
+      _exitPassword != _initialExitPassword;
   }
 
   bool get _syncDirty => _ntpController.text.trim() != _initialNtp;
@@ -241,6 +257,9 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
         themeMode: _themeModeKey(_themeMode),
         themePalette: _themePalette.key,
         maxDriftStepMs: _maxDriftStepMs,
+        exitPasswordEnabled: _exitPasswordEnabled,
+        exitPassword: _exitPassword,
+        safeMode: _safeMode,
       ),
     );
     if (!mounted) {
@@ -252,7 +271,31 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
       _initialMaxDriftStepMs = _maxDriftStepMs;
       _initialThemeMode = _themeMode;
       _initialThemePalette = _themePalette;
+      _initialExitPasswordEnabled = _exitPasswordEnabled;
+      _initialSafeMode = _safeMode;
+      _initialExitPassword = _exitPassword;
     });
+  }
+
+  Future<void> _setOrChangeExitPassword() async {
+    final password = await ExitPasswordDialog.show(context);
+    if (password == null) {
+      return;
+    }
+    if (!RegExp(r'^\d{1,6}$').hasMatch(password)) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('密码必须是 1-6 位数字')));
+      return;
+    }
+    setState(() {
+      _exitPassword = password;
+      _exitPasswordEnabled = true;
+    });
+    _scheduleAutoSave(_saveDisplaySettings);
   }
 
   Future<void> _applyTheme({ThemeMode? mode, ThemePalette? palette}) async {
@@ -659,6 +702,76 @@ class _NtpConfigPageState extends State<NtpConfigPage> {
                           : null,
                       icon: const Icon(Icons.save_alt_outlined),
                       label: const Text('仅保存放映参数'),
+                    ),
+                    const SizedBox(height: 18),
+                    Divider(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      '放映安全',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '可设置退出密码。开启安全模式后，考试进行中会自动临时关闭密码保护。',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('启用退出密码'),
+                      subtitle: Text(
+                        _exitPassword.isEmpty ? '未设置密码' : '已设置 ${_exitPassword.length} 位数字密码',
+                      ),
+                      value: _exitPasswordEnabled,
+                      onChanged: (enabled) {
+                        setState(() {
+                          _exitPasswordEnabled = enabled;
+                          if (!enabled) {
+                            _safeMode = false;
+                          }
+                        });
+                        _scheduleAutoSave(_saveDisplaySettings);
+                      },
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: _setOrChangeExitPassword,
+                          icon: const Icon(Icons.pin_outlined),
+                          label: Text(_exitPassword.isEmpty ? '设置密码' : '修改密码'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _exitPassword.isEmpty
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _exitPassword = '';
+                                    _exitPasswordEnabled = false;
+                                    _safeMode = false;
+                                  });
+                                  _scheduleAutoSave(_saveDisplaySettings);
+                                },
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('清除密码'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('安全模式'),
+                      subtitle: const Text('考试进行中：退出放映无需输入密码；考试结束后自动恢复密码'),
+                      value: _safeMode,
+                      onChanged: _exitPasswordEnabled
+                          ? (enabled) {
+                              setState(() => _safeMode = enabled);
+                              _scheduleAutoSave(_saveDisplaySettings);
+                            }
+                          : null,
                     ),
                     const SizedBox(height: 18),
                     Divider(

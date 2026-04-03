@@ -1,13 +1,16 @@
 import 'package:aeterna/shared/widgets/aeterna_logo.dart';
 import 'package:aeterna/shared/widgets/surface_card.dart';
+import 'package:aeterna/core/update/update_models.dart';
+import 'package:aeterna/core/update/update_service.dart';
 import 'package:aeterna/theme/design_tokens.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String _githubProfileUrl = 'https://github.com/ziyi127';
 const String _githubRepoUrl = 'https://github.com/ziyi127/Aeterna';
-const String _githubAvatarUrl = 'https://github.com/ziyi127.png';
+const String _githubAvatarUrl = 'https://avatars.githubusercontent.com/ziyi127';
 
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
@@ -137,11 +140,69 @@ class _FeatureRow extends StatelessWidget {
   }
 }
 
-class _ReleaseCard extends StatelessWidget {
+class _ReleaseCard extends StatefulWidget {
   const _ReleaseCard();
+
+  @override
+  State<_ReleaseCard> createState() => _ReleaseCardState();
+}
+
+class _ReleaseCardState extends State<_ReleaseCard> {
+  late final Future<PackageInfo> _packageInfoFuture;
+  bool _checking = false;
+  String _statusText = '点击下方按钮检查更新。';
+  DownloadedUpdatePackage? _pendingPackage;
+
+  @override
+  void initState() {
+    super.initState();
+    _packageInfoFuture = PackageInfo.fromPlatform();
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_checking) {
+      return;
+    }
+    setState(() {
+      _checking = true;
+      _statusText = '正在检查更新并下载最新安装包...';
+    });
+    final info = await _packageInfoFuture;
+    final result = await UpdateService.checkAndDownloadLatest(
+      currentVersion: info.version,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _checking = false;
+      _pendingPackage = result.downloadedPackage;
+      _statusText = result.message;
+    });
+  }
+
+  Future<void> _installNow() async {
+    final package = _pendingPackage;
+    if (package == null) {
+      return;
+    }
+    final launched = await UpdateService.launchInstaller(package);
+    if (!launched || !mounted) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    SystemNavigator.pop();
+  }
 
   Future<void> _openRepo() async {
     final uri = Uri.parse(_githubRepoUrl);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _downloadAutoInstaller() async {
+    final uri = Uri.parse(
+      'https://github.com/ziyi127/Aeterna/releases/latest/download/aeterna-setup.exe',
+    );
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -154,7 +215,16 @@ class _ReleaseCard extends StatelessWidget {
         children: [
           Text('版本信息', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 10),
-          const _VersionLine(),
+          FutureBuilder<PackageInfo>(
+            future: _packageInfoFuture,
+            builder: (context, snapshot) {
+              final version = snapshot.hasData ? snapshot.data!.version : '--';
+              return Text(
+                '当前版本: v$version',
+                style: Theme.of(context).textTheme.bodyMedium,
+              );
+            },
+          ),
           const SizedBox(height: 6),
           Text(
             '发布日期: 2026-03-28',
@@ -176,6 +246,45 @@ class _ReleaseCard extends StatelessWidget {
             icon: const Icon(Icons.open_in_new),
             label: const Text('打开仓库地址'),
           ),
+          const SizedBox(height: 14),
+          Divider(color: Theme.of(context).colorScheme.outlineVariant),
+          const SizedBox(height: 12),
+          Text('自动更新', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(
+            '仅 Windows 版本提供自动安装程序。检查更新后可一键安装，或下载 EXE 安装器手动升级。',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 10),
+          Text(_statusText, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: _checking ? null : _checkForUpdate,
+                icon: _checking
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.system_update_alt_outlined),
+                label: Text(_checking ? '检查中' : '检查更新'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _pendingPackage == null ? null : _installNow,
+                icon: const Icon(Icons.play_arrow_outlined),
+                label: const Text('确认安装'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _downloadAutoInstaller,
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('下载 EXE 安装器'),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -193,24 +302,6 @@ class _VersionCaption extends StatelessWidget {
         final version = snapshot.hasData ? snapshot.data!.version : '--';
         return Text(
           'Exam Dashboard v$version',
-          style: Theme.of(context).textTheme.bodyMedium,
-        );
-      },
-    );
-  }
-}
-
-class _VersionLine extends StatelessWidget {
-  const _VersionLine();
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<PackageInfo>(
-      future: PackageInfo.fromPlatform(),
-      builder: (context, snapshot) {
-        final version = snapshot.hasData ? snapshot.data!.version : '--';
-        return Text(
-          '当前版本: v$version',
           style: Theme.of(context).textTheme.bodyMedium,
         );
       },

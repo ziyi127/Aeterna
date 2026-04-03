@@ -2,6 +2,7 @@ import 'package:aeterna/core/config/config_manager.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/ntp_service.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
+import 'package:aeterna/core/update/update_service.dart';
 import 'package:aeterna/features/home/about_page.dart';
 import 'package:aeterna/features/home/home_launcher_page.dart';
 import 'package:aeterna/features/monitor/live_monitor_page.dart';
@@ -27,6 +28,7 @@ class _AeternaAppState extends State<AeternaApp> {
   bool _showWelcome = false;
   bool _welcomeClosing = false;
   String _appVersion = '--';
+  String? _upgradeNotice;
   int _lastSavedPlanSignature = 0;
 
   /// Compute a lightweight signature of the plan to detect actual changes
@@ -83,11 +85,13 @@ class _AeternaAppState extends State<AeternaApp> {
 
   Future<void> _loadWelcomeState() async {
     final shown = await ConfigManager.isWelcomeShown();
+    final upgradeNotice = await UpdateService.consumeSuccessNotice();
     if (!mounted) {
       return;
     }
     setState(() {
-      _showWelcome = !shown;
+      _upgradeNotice = upgradeNotice?.message;
+      _showWelcome = !shown || upgradeNotice != null;
     });
   }
 
@@ -231,6 +235,7 @@ class _AeternaAppState extends State<AeternaApp> {
                     ignoring: _welcomeClosing,
                     child: _WelcomeOverlay(
                       version: _appVersion,
+                      upgradeNotice: _upgradeNotice,
                       onStart: _dismissWelcome,
                     ),
                   ),
@@ -273,10 +278,15 @@ class _AeternaAppState extends State<AeternaApp> {
 }
 
 class _WelcomeOverlay extends StatelessWidget {
-  const _WelcomeOverlay({required this.version, required this.onStart});
+  const _WelcomeOverlay({
+    required this.version,
+    required this.onStart,
+    this.upgradeNotice,
+  });
 
   final String version;
   final VoidCallback onStart;
+  final String? upgradeNotice;
 
   @override
   Widget build(BuildContext context) {
@@ -332,6 +342,29 @@ class _WelcomeOverlay extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 22),
+                  if (upgradeNotice != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: scheme.primary.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Text(
+                        upgradeNotice!,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                  ],
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
@@ -347,7 +380,9 @@ class _WelcomeOverlay extends StatelessWidget {
                         const CircleAvatar(
                           radius: 22,
                           backgroundImage:
-                              NetworkImage('https://github.com/ziyi127.png'),
+                              NetworkImage(
+                                'https://avatars.githubusercontent.com/ziyi127',
+                              ),
                         ),
                         const SizedBox(width: 12),
                         Column(

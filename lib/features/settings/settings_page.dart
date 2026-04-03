@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:aeterna/core/config/config_manager.dart';
+import 'package:aeterna/core/security/f2a_totp.dart';
 import 'package:aeterna/core/time/time_source_mode.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
 import 'package:aeterna/shared/widgets/aeterna_reveal.dart';
@@ -9,8 +11,12 @@ import 'package:aeterna/shared/widgets/surface_card.dart';
 import 'package:aeterna/theme/app_theme.dart';
 import 'package:aeterna/theme/design_tokens.dart';
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 enum _LeaveAction { save, discard, cancel }
+enum _ExitProtectionMode { none, localPassword, f2a }
+enum _F2AEnrollmentMode { webPage, authenticatorApp }
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({
@@ -57,6 +63,10 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _initialExitPasswordEnabled = false;
   bool _initialSafeMode = false;
   String _initialExitPassword = '';
+  bool _f2aEnabled = false;
+  bool _initialF2aEnabled = false;
+  List<F2AFactor> _f2aFactors = const [];
+  String _initialF2aSignature = '';
 
   @override
   void initState() {
@@ -136,7 +146,17 @@ class _SettingsPageState extends State<SettingsPage> {
       _initialExitPasswordEnabled = settings.exitPasswordEnabled;
       _initialSafeMode = settings.safeMode;
       _initialExitPassword = settings.exitPassword;
+      _f2aEnabled = settings.f2aEnabled;
+      _initialF2aEnabled = settings.f2aEnabled;
+      _f2aFactors = settings.f2aFactors;
+      _initialF2aSignature = _f2aSignature(settings.f2aFactors);
     });
+  }
+
+  String _f2aSignature(List<F2AFactor> factors) {
+    return factors
+        .map((e) => '${e.id}|${e.name}|${e.secret}|${e.createdAtMs}')
+        .join('::');
   }
 
   ThemeMode _themeModeFromKey(String key) {
@@ -168,7 +188,65 @@ class _SettingsPageState extends State<SettingsPage> {
       case ThemeMode.dark:
         return '深色';
       case ThemeMode.system:
-        return '跟随系统';
+        return '系统';
+    }
+  }
+
+  _ExitProtectionMode get _exitProtectionMode {
+    if (_f2aEnabled) {
+      return _ExitProtectionMode.f2a;
+    }
+    if (_exitPasswordEnabled) {
+      return _ExitProtectionMode.localPassword;
+    }
+    return _ExitProtectionMode.none;
+  }
+
+  Future<void> _setExitProtectionMode(_ExitProtectionMode mode) async {
+    if (!mounted) {
+      return;
+    }
+    switch (mode) {
+      case _ExitProtectionMode.none:
+        setState(() {
+          _exitPasswordEnabled = false;
+          _safeMode = false;
+          _f2aEnabled = false;
+        });
+        _scheduleAutoSave(_saveDisplaySettings);
+        return;
+      case _ExitProtectionMode.localPassword:
+        if (_exitPassword.isEmpty) {
+          await _setOrChangeExitPassword();
+          if (!mounted) {
+            return;
+          }
+          if (_exitPassword.isEmpty) {
+            return;
+          }
+        }
+        setState(() {
+          _exitPasswordEnabled = true;
+          _safeMode = false;
+          _f2aEnabled = false;
+        });
+        _scheduleAutoSave(_saveDisplaySettings);
+        return;
+      case _ExitProtectionMode.f2a:
+        if (_f2aFactors.isEmpty) {
+          await _enrollF2aFactor();
+          if (!mounted || !_f2aEnabled) {
+            return;
+          }
+        } else {
+          setState(() {
+            _exitPasswordEnabled = false;
+            _safeMode = false;
+            _f2aEnabled = true;
+          });
+          _scheduleAutoSave(_saveDisplaySettings);
+        }
+        return;
     }
   }
 
@@ -180,7 +258,9 @@ class _SettingsPageState extends State<SettingsPage> {
       _themePalette != _initialThemePalette ||
       _exitPasswordEnabled != _initialExitPasswordEnabled ||
       _safeMode != _initialSafeMode ||
-      _exitPassword != _initialExitPassword;
+      _exitPassword != _initialExitPassword ||
+      _f2aEnabled != _initialF2aEnabled ||
+      _f2aSignature(_f2aFactors) != _initialF2aSignature;
   }
 
   bool get _syncDirty => _ntpController.text.trim() != _initialNtp;
@@ -261,6 +341,8 @@ class _SettingsPageState extends State<SettingsPage> {
         exitPasswordEnabled: _exitPasswordEnabled,
         exitPassword: _exitPassword,
         safeMode: _safeMode,
+        f2aEnabled: _f2aEnabled,
+        f2aFactors: _f2aFactors,
       ),
     );
     if (!mounted) {
@@ -275,6 +357,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _initialExitPasswordEnabled = _exitPasswordEnabled;
       _initialSafeMode = _safeMode;
       _initialExitPassword = _exitPassword;
+      _initialF2aEnabled = _f2aEnabled;
+      _initialF2aSignature = _f2aSignature(_f2aFactors);
     });
   }
 
@@ -293,8 +377,299 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
     setState(() {
-      _exitPassword = password;
+      _exitPassword = ConfigManager.normalizePasswordStorage(password);
       _exitPasswordEnabled = true;
+      _f2aEnabled = false;
+    });
+    _scheduleAutoSave(_saveDisplaySettings);
+  }
+
+  Future<bool> _confirmRotateF2a() async {
+    if (_f2aFactors.isEmpty) {
+      return true;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('重新生成 F2A 二维码'),
+          content: const Text('当前已经绑定了 F2A。生成新的二维码会让旧的 F2A 失效，是否继续？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('继续'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
+  Future<_F2AEnrollmentMode?> _chooseF2aEnrollmentMode() async {
+    return showDialog<_F2AEnrollmentMode>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('选择 F2A 绑定方式'),
+          content: const Text('你可以使用 Aeterna 网页绑定，或者直接使用第三方 F2A 验证器。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(ctx).pop(_F2AEnrollmentMode.webPage),
+              icon: const Icon(Icons.web_outlined),
+              label: const Text('Aeterna 网页'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(ctx).pop(_F2AEnrollmentMode.authenticatorApp),
+              icon: const Icon(Icons.phone_android_outlined),
+              label: const Text('第三方验证器'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _buildF2aPageUrl({required String secret}) {
+    return Uri.https('ziyi127.github.io', '/Aeterna/f2a/index.html', {
+      'secret': secret,
+    }).toString();
+  }
+
+  String _buildOtpauthUri({required String secret, required String label}) {
+    final encodedLabel = Uri.encodeComponent('Aeterna:$label');
+    return 'otpauth://totp/$encodedLabel?secret=$secret&issuer=Aeterna&digits=6&period=30';
+  }
+
+  Future<void> _enrollF2aFactor() async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final random = Random.secure().nextInt(1 << 20);
+    final factorId = '${now}_$random';
+    final secret = F2ATotp.generateSecret(length: 32);
+
+    final mode = await _chooseF2aEnrollmentMode();
+    if (mode == null || !mounted) {
+      return;
+    }
+
+    final rotateConfirmed = await _confirmRotateF2a();
+    if (!rotateConfirmed || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _f2aEnabled = false;
+      _f2aFactors = const [];
+    });
+
+    final pageUrl = switch (mode) {
+      _F2AEnrollmentMode.webPage => _buildF2aPageUrl(secret: secret),
+      _F2AEnrollmentMode.authenticatorApp => _buildOtpauthUri(
+        secret: secret,
+        label: 'F2A $factorId',
+      ),
+    };
+    final qrTitle = switch (mode) {
+      _F2AEnrollmentMode.webPage => '扫码绑定 Aeterna 网页',
+      _F2AEnrollmentMode.authenticatorApp => '扫码绑定第三方验证器',
+    };
+    final qrHint = switch (mode) {
+      _F2AEnrollmentMode.webPage => '请使用手机扫码。网页会自动接收密钥并写入 Cookie。',
+      _F2AEnrollmentMode.authenticatorApp => '请使用第三方 F2A 验证器扫码，扫码后会生成 6 位动态码。',
+    };
+    final verifyTitle = switch (mode) {
+      _F2AEnrollmentMode.webPage => '验证密钥',
+      _F2AEnrollmentMode.authenticatorApp => '验证动态验证码',
+    };
+    final verifyHint = switch (mode) {
+      _F2AEnrollmentMode.webPage => '请输入网页中看到的 F2A 密钥，确认你已成功读取。',
+      _F2AEnrollmentMode.authenticatorApp => '请输入第三方验证器当前显示的 6 位验证码。',
+    };
+    final primaryLabel = switch (mode) {
+      _F2AEnrollmentMode.webPage => '验证并开启',
+      _F2AEnrollmentMode.authenticatorApp => '验证并开启',
+    };
+
+    final continueSetup = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(qrTitle),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(qrHint),
+                const SizedBox(height: 10),
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                    child: QrImageView(
+                      data: pageUrl,
+                      size: 210,
+                      backgroundColor: Colors.white,
+                      eyeStyle: const QrEyeStyle(
+                        eyeShape: QrEyeShape.square,
+                        color: Colors.black,
+                      ),
+                      dataModuleStyle: const QrDataModuleStyle(
+                        dataModuleShape: QrDataModuleShape.square,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SelectableText(
+                  pageUrl,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
+                if (mode == _F2AEnrollmentMode.webPage)
+                  Text(
+                    '网页会在首次打开时提示设置名称，并把密钥和名称一起保存到 Cookie。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                if (mode == _F2AEnrollmentMode.authenticatorApp)
+                  Text(
+                    '这是一组标准 TOTP 配置，第三方验证器会直接识别。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    launchUrl(
+                      Uri.parse(pageUrl),
+                      mode: LaunchMode.externalApplication,
+                    );
+                  },
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('在浏览器打开绑定页'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('我已扫码'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (continueSetup != true || !mounted) {
+      return;
+    }
+
+    final verifyController = TextEditingController();
+    final verified = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(verifyTitle),
+          content: SizedBox(
+            width: 340,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(verifyHint),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: verifyController,
+                  decoration: InputDecoration(
+                    labelText: mode == _F2AEnrollmentMode.webPage ? 'F2A 密钥' : '6 位验证码',
+                    hintText: mode == _F2AEnrollmentMode.webPage
+                        ? '仅限 A-Z 和 2-7'
+                        : '来自第三方验证器',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final ok = switch (mode) {
+                  _F2AEnrollmentMode.webPage => verifyController.text
+                      .toUpperCase()
+                      .replaceAll(RegExp(r'[^A-Z2-7]'), '') ==
+                      secret.toUpperCase().replaceAll(RegExp(r'[^A-Z2-7]'), ''),
+                  _F2AEnrollmentMode.authenticatorApp => F2ATotp.verifyCode(
+                      code: verifyController.text,
+                      factors: [F2AFactor(id: factorId, name: 'F2A 1', secret: secret, createdAtMs: now)],
+                      at: DateTime.now(),
+                    ),
+                };
+                if (!ok) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(mode == _F2AEnrollmentMode.webPage ? '密钥不匹配，请确认网页读取结果' : '验证码不正确，请重试')),
+                  );
+                  return;
+                }
+                Navigator.of(ctx).pop(true);
+              },
+              child: Text(primaryLabel),
+            ),
+          ],
+        );
+      },
+    );
+    verifyController.dispose();
+
+    if (verified != true || !mounted) {
+      return;
+    }
+
+    final factor = F2AFactor(
+      id: factorId,
+      name: 'F2A ${_f2aFactors.length + 1}',
+      secret: secret,
+      createdAtMs: now,
+    );
+    setState(() {
+      _f2aFactors = [factor];
+      _f2aEnabled = true;
+      _exitPasswordEnabled = false;
+    });
+    _scheduleAutoSave(_saveDisplaySettings);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('F2A 已启用')));
+  }
+
+  void _removeF2aFactor(String id) {
+    setState(() {
+      _f2aFactors = _f2aFactors.where((factor) => factor.id != id).toList();
+      if (_f2aFactors.isEmpty) {
+        _f2aEnabled = false;
+      }
     });
     _scheduleAutoSave(_saveDisplaySettings);
   }
@@ -724,23 +1099,35 @@ class _SettingsPageState extends State<SettingsPage> {
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 10),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('启用退出密码'),
-                      subtitle: Text(
-                        _exitPassword.isEmpty ? '未设置密码' : '已设置 ${_exitPassword.length} 位数字密码',
-                      ),
-                      value: _exitPasswordEnabled,
-                      onChanged: (enabled) {
-                        setState(() {
-                          _exitPasswordEnabled = enabled;
-                          if (!enabled) {
-                            _safeMode = false;
-                          }
-                        });
-                        _scheduleAutoSave(_saveDisplaySettings);
+                    Text(
+                      '退出保护方式',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<_ExitProtectionMode>(
+                      segments: const [
+                        ButtonSegment<_ExitProtectionMode>(
+                          value: _ExitProtectionMode.none,
+                          label: Text('关闭'),
+                          icon: Icon(Icons.lock_open_outlined),
+                        ),
+                        ButtonSegment<_ExitProtectionMode>(
+                          value: _ExitProtectionMode.localPassword,
+                          label: Text('本地密码'),
+                          icon: Icon(Icons.pin_outlined),
+                        ),
+                        ButtonSegment<_ExitProtectionMode>(
+                          value: _ExitProtectionMode.f2a,
+                          label: Text('F2A'),
+                          icon: Icon(Icons.qr_code_2_outlined),
+                        ),
+                      ],
+                      selected: {_exitProtectionMode},
+                      onSelectionChanged: (selection) {
+                        unawaited(_setExitProtectionMode(selection.first));
                       },
                     ),
+                    const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -766,19 +1153,94 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ],
                     ),
+                    Text(
+                      _exitProtectionMode == _ExitProtectionMode.localPassword
+                          ? '当前使用本地密码保护'
+                          : _exitProtectionMode == _ExitProtectionMode.f2a
+                              ? '当前使用 F2A 保护'
+                              : '当前未启用退出保护',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                     const SizedBox(height: 10),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('安全模式'),
-                      subtitle: const Text('考试进行中：退出放映无需输入密码；考试结束后自动恢复密码'),
+                      subtitle: const Text('考试进行中：退出放映无需输入保护码；考试结束后自动恢复'),
                       value: _safeMode,
-                      onChanged: _exitPasswordEnabled
+                      onChanged: _exitProtectionMode == _ExitProtectionMode.localPassword
                           ? (enabled) {
                               setState(() => _safeMode = enabled);
                               _scheduleAutoSave(_saveDisplaySettings);
                             }
                           : null,
                     ),
+                    const SizedBox(height: 12),
+                    Divider(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'F2A 二次验证',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '启用后，退出放映时需要输入手机网页中的动态验证码。网页会自行保存名称和密钥。',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _f2aFactors.isEmpty
+                          ? '未绑定 F2A 密钥'
+                          : '已绑定 ${_f2aFactors.length} 组 F2A 密钥',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: _enrollF2aFactor,
+                          icon: const Icon(Icons.qr_code_2_outlined),
+                          label: const Text('新增 F2A'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _f2aFactors.isEmpty
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _f2aFactors = const [];
+                                    _f2aEnabled = false;
+                                  });
+                                  _scheduleAutoSave(_saveDisplaySettings);
+                                },
+                          icon: const Icon(Icons.delete_sweep_outlined),
+                          label: const Text('清空 F2A'),
+                        ),
+                      ],
+                    ),
+                    if (_f2aFactors.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Column(
+                        children: _f2aFactors.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final factor = entry.value;
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.phonelink_lock_outlined),
+                            title: Text('F2A ${index + 1}'),
+                            subtitle: const Text('已绑定并可用于退出验证'),
+                            trailing: IconButton(
+                              tooltip: '删除',
+                              onPressed: () => _removeF2aFactor(factor.id),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     Divider(
                       color: Theme.of(context).colorScheme.outlineVariant,

@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aeterna F2A 验证页</title>
+    <style>
+      :root {
+        --bg: #f4f7f4;
+        --card: #ffffff;
+        --ink: #102217;
+        --sub: #5f6f63;
+        --accent: #2f7d55;
+        --line: #dbe5dd;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(1200px 800px at 10% -10%, #dff3e3 0%, var(--bg) 50%, #ecf2f0 100%);
+      }
+      .wrap {
+        max-width: 780px;
+        margin: 0 auto;
+        padding: 22px 16px 36px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 12px 28px rgba(16, 34, 23, 0.06);
+      }
+      h1 {
+        margin: 0;
+        font-size: 24px;
+      }
+      p {
+        margin: 8px 0;
+        color: var(--sub);
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .pill {
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        background: #ebf4ee;
+        color: #244f37;
+      }
+      .list {
+        margin-top: 14px;
+        display: grid;
+        gap: 10px;
+      }
+      .item {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+      }
+      .name {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .code {
+        margin-top: 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        letter-spacing: 2px;
+        font-size: 32px;
+        color: var(--accent);
+      }
+      .meta {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--sub);
+      }
+      button {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        border-radius: 10px;
+        padding: 8px 12px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: transparent;
+      }
+      dialog {
+        border: none;
+        border-radius: 14px;
+        width: min(92vw, 460px);
+        padding: 0;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.44);
+      }
+      .dialog-body {
+        padding: 16px;
+      }
+      input {
+        width: 100%;
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 9px 10px;
+        font-size: 14px;
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      @media (max-width: 560px) {
+        h1 {
+          font-size: 20px;
+        }
+        .code {
+          font-size: 28px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Aeterna F2A 动态验证码</h1>
+        <p>本页会将扫码获取到的密钥保存到 Cookie，并持续生成 6 位动态验证码。</p>
+        <div class="item" id="incoming-card" style="margin-top: 12px; display: none;">
+          <div class="name">本次绑定密钥</div>
+          <div class="meta">请将下面的密钥回填到电脑端完成验证。</div>
+          <div class="code" id="incoming-secret">--</div>
+          <div class="meta" id="incoming-secret-meta"></div>
+          <div class="row" style="margin-top: 10px;">
+            <button id="copy-secret-btn" class="primary">复制密钥</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="pill" id="status-pill">等待扫码数据</span>
+          <span class="pill" id="countdown-pill">剩余 30 秒</span>
+        </div>
+        <div style="margin-top: 10px" class="row">
+          <button id="clear-btn">清空所有密钥</button>
+        </div>
+        <div class="list" id="factor-list"></div>
+      </div>
+    </div>
+
+    <dialog id="name-dialog">
+      <div class="dialog-body">
+        <h3 style="margin: 0">设置设备名称</h3>
+        <p style="margin-top: 6px">首次读取密钥成功，请设置一个名称并保存到 Cookie。</p>
+        <input id="name-input" placeholder="例如：值班老师手机" maxlength="30" />
+        <div class="actions">
+          <button id="name-cancel">取消</button>
+          <button id="name-confirm" class="primary">保存</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script>
+      const COOKIE_KEY = 'aeterna_f2a_keys';
+      const NAME_DIALOG = document.getElementById('name-dialog');
+      const NAME_INPUT = document.getElementById('name-input');
+      const INCOMING_CARD = document.getElementById('incoming-card');
+      const INCOMING_SECRET = document.getElementById('incoming-secret');
+      const INCOMING_SECRET_META = document.getElementById('incoming-secret-meta');
+      const COPY_SECRET_BTN = document.getElementById('copy-secret-btn');
+      const STATUS_PILL = document.getElementById('status-pill');
+      const COUNTDOWN_PILL = document.getElementById('countdown-pill');
+      const LIST_EL = document.getElementById('factor-list');
+      const CLEAR_BTN = document.getElementById('clear-btn');
+
+      let factors = loadFactors();
+      let incomingSecret = '';
+      let incomingName = '';
+
+      function setCookie(name, value, days) {
+        const expires = new Date(Date.now() + days * 86400000).toUTCString();
+        document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+      }
+
+      function getCookie(name) {
+        const prefix = `${name}=`;
+        const parts = document.cookie.split(';');
+        for (const raw of parts) {
+          const part = raw.trim();
+          if (part.startsWith(prefix)) {
+            return decodeURIComponent(part.substring(prefix.length));
+          }
+        }
+        return '';
+      }
+
+      function loadFactors() {
+        try {
+          const raw = getCookie(COOKIE_KEY);
+          if (!raw) return [];
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          return parsed.filter((x) => x && typeof x.id === 'string' && typeof x.secret === 'string');
+        } catch (_) {
+          return [];
+        }
+      }
+
+      function saveFactors() {
+        setCookie(COOKIE_KEY, JSON.stringify(factors), 3650);
+      }
+
+      function setIncomingSecret(secret, name) {
+        incomingSecret = normalizeSecret(secret);
+        incomingName = (name || '').trim();
+        if (!incomingSecret) {
+          INCOMING_CARD.style.display = 'none';
+          return;
+        }
+        INCOMING_CARD.style.display = 'block';
+        INCOMING_SECRET.textContent = incomingSecret;
+        INCOMING_SECRET_META.textContent = incomingName
+          ? `建议名称: ${incomingName}`
+          : '建议名称会在首次保存时设置并写入 Cookie。';
+      }
+
+      function normalizeSecret(secret) {
+        return (secret || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+      }
+
+      function isValidSecret(secret) {
+        return /^[A-Z2-7]{16,}$/.test(normalizeSecret(secret));
+      }
+
+      function base32Decode(input) {
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+        const cleaned = (input || '').replace(/=/g, '');
+        let bits = 0;
+        let value = 0;
+        const out = [];
+        for (const ch of cleaned) {
+          const idx = alphabet.indexOf(ch);
+          if (idx < 0) continue;
+          value = (value << 5) | idx;
+          bits += 5;
+          if (bits >= 8) {
+            out.push((value >> (bits - 8)) & 0xff);
+            bits -= 8;
+          }
+        }
+        return new Uint8Array(out);
+      }
+
+      async function totp(secret, timeMs = Date.now(), digits = 6, period = 30) {
+        const keyData = base32Decode(normalizeSecret(secret));
+        const counter = Math.floor(timeMs / 1000 / period);
+        const view = new DataView(new ArrayBuffer(8));
+        view.setUint32(0, Math.floor(counter / 0x100000000));
+        view.setUint32(4, counter >>> 0);
+
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          keyData,
+          { name: 'HMAC', hash: 'SHA-1' },
+          false,
+          ['sign']
+        );
+        const signature = new Uint8Array(
+          await crypto.subtle.sign('HMAC', cryptoKey, view.buffer)
+        );
+        const offset = signature[signature.length - 1] & 0x0f;
+        const binary =
+          ((signature[offset] & 0x7f) << 24) |
+          ((signature[offset + 1] & 0xff) << 16) |
+          ((signature[offset + 2] & 0xff) << 8) |
+          (signature[offset + 3] & 0xff);
+        const mod = 10 ** digits;
+        const otp = binary % mod;
+        return String(otp).padStart(digits, '0');
+      }
+
+      function parseIncoming() {
+        const url = new URL(window.location.href);
+        const secret = normalizeSecret(url.searchParams.get('secret') || '');
+        const name = (url.searchParams.get('name') || '').trim();
+        setIncomingSecret(secret, name);
+        if (!secret || !isValidSecret(secret)) {
+          STATUS_PILL.textContent = '等待扫码数据';
+          return;
+        }
+
+        const existing = factors.find((x) => x.id === secret);
+        const now = Date.now();
+        if (existing) {
+          existing.secret = secret;
+          existing.updatedAt = now;
+          saveFactors();
+          STATUS_PILL.textContent = `已更新密钥：${existing.name || secret.slice(0, 6)}`;
+          return;
+        }
+
+        NAME_INPUT.value = name || '';
+        NAME_DIALOG.showModal();
+
+        const onConfirm = () => {
+          const deviceName = (NAME_INPUT.value || '').trim() || `设备${factors.length + 1}`;
+          factors.push({ id: secret, name: deviceName, secret, createdAt: now });
+          saveFactors();
+          STATUS_PILL.textContent = `已添加密钥：${deviceName}`;
+          NAME_DIALOG.close();
+          NAME_DIALOG.removeEventListener('close', onClose);
+          render();
+        };
+
+        const onClose = () => {
+          document.getElementById('name-confirm').onclick = null;
+          document.getElementById('name-cancel').onclick = null;
+          if (!factors.find((x) => x.id === secret)) {
+            STATUS_PILL.textContent = '已取消保存新密钥';
+          }
+        };
+
+        document.getElementById('name-confirm').onclick = onConfirm;
+        document.getElementById('name-cancel').onclick = () => NAME_DIALOG.close();
+        NAME_DIALOG.addEventListener('close', onClose);
+      }
+
+      async function render() {
+        LIST_EL.innerHTML = '';
+        if (!factors.length) {
+          const empty = document.createElement('p');
+          empty.textContent = '当前没有保存的 F2A 密钥，请先从电脑端扫码绑定。';
+          LIST_EL.appendChild(empty);
+          return;
+        }
+
+        const now = Date.now();
+        const remain = 30 - (Math.floor(now / 1000) % 30);
+        COUNTDOWN_PILL.textContent = `剩余 ${remain} 秒`;
+
+        for (const factor of factors) {
+          const item = document.createElement('div');
+          item.className = 'item';
+          const code = await totp(factor.secret, now);
+          const masked = `${factor.secret.slice(0, 4)}***${factor.secret.slice(-4)}`;
+          item.innerHTML = `
+            <div class="row" style="justify-content: space-between; align-items: flex-start;">
+              <div>
+                <div class="name">${escapeHtml(factor.name || '未命名设备')}</div>
+                <div class="meta">密钥: ${escapeHtml(masked)}</div>
+              </div>
+              <button data-remove="${escapeHtml(factor.id)}">删除</button>
+            </div>
+            <div class="code">${code}</div>
+            <div class="meta">每 30 秒刷新一次</div>
+          `;
+          LIST_EL.appendChild(item);
+        }
+
+        LIST_EL.querySelectorAll('[data-remove]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-remove');
+            factors = factors.filter((x) => x.id !== id);
+            saveFactors();
+            render();
+          });
+        });
+      }
+
+      function escapeHtml(str) {
+        return (str || '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      CLEAR_BTN.addEventListener('click', () => {
+        factors = [];
+        saveFactors();
+        STATUS_PILL.textContent = '已清空所有密钥';
+        render();
+      });
+
+      COPY_SECRET_BTN.addEventListener('click', async () => {
+        if (!incomingSecret) {
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(incomingSecret);
+          STATUS_PILL.textContent = '密钥已复制到剪贴板';
+        } catch (_) {
+          STATUS_PILL.textContent = '复制失败，请手动选择密钥';
+        }
+      });
+
+      parseIncoming();
+      render();
+      setInterval(render, 1000);
+    </script>
+  </body>
+</html>

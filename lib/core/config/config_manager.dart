@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:aeterna/core/config/exam_aware_2_parser.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/time_source_mode.dart';
+import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ExamPlanConfig {
@@ -115,6 +117,8 @@ class DisplaySettings {
     this.exitPasswordEnabled = false,
     this.exitPassword = '',
     this.safeMode = false,
+    this.f2aEnabled = false,
+    this.f2aFactors = const <F2AFactor>[],
   });
 
   final double fontScale;
@@ -125,6 +129,8 @@ class DisplaySettings {
   final bool exitPasswordEnabled;
   final String exitPassword;
   final bool safeMode;
+  final bool f2aEnabled;
+  final List<F2AFactor> f2aFactors;
 
   DisplaySettings copyWith({
     double? fontScale,
@@ -135,6 +141,8 @@ class DisplaySettings {
     bool? exitPasswordEnabled,
     String? exitPassword,
     bool? safeMode,
+    bool? f2aEnabled,
+    List<F2AFactor>? f2aFactors,
   }) {
     return DisplaySettings(
       fontScale: fontScale ?? this.fontScale,
@@ -145,6 +153,8 @@ class DisplaySettings {
       exitPasswordEnabled: exitPasswordEnabled ?? this.exitPasswordEnabled,
       exitPassword: exitPassword ?? this.exitPassword,
       safeMode: safeMode ?? this.safeMode,
+      f2aEnabled: f2aEnabled ?? this.f2aEnabled,
+      f2aFactors: f2aFactors ?? this.f2aFactors,
     );
   }
 
@@ -158,10 +168,13 @@ class DisplaySettings {
       'exitPasswordEnabled': exitPasswordEnabled,
       'exitPassword': exitPassword,
       'safeMode': safeMode,
+      'f2aEnabled': f2aEnabled,
+      'f2aFactors': f2aFactors.map((e) => e.toJson()).toList(),
     };
   }
 
   static DisplaySettings fromJson(Map<String, dynamic> json) {
+    final factorsRaw = (json['f2aFactors'] as List?) ?? const [];
     return DisplaySettings(
       fontScale: (json['fontScale'] as num?)?.toDouble() ?? 1.0,
       roomLabel: (json['roomLabel'] as String?)?.trim().isNotEmpty == true
@@ -177,6 +190,63 @@ class DisplaySettings {
       exitPasswordEnabled: (json['exitPasswordEnabled'] as bool?) ?? false,
       exitPassword: (json['exitPassword'] as String?) ?? '',
       safeMode: (json['safeMode'] as bool?) ?? false,
+      f2aEnabled: (json['f2aEnabled'] as bool?) ?? false,
+      f2aFactors: factorsRaw
+          .whereType<Map>()
+          .map((item) => F2AFactor.fromJson(Map<String, dynamic>.from(item)))
+          .toList(),
+    );
+  }
+}
+
+class F2AFactor {
+  const F2AFactor({
+    required this.id,
+    required this.name,
+    required this.secret,
+    required this.createdAtMs,
+  });
+
+  final String id;
+  final String name;
+  final String secret;
+  final int createdAtMs;
+
+  F2AFactor copyWith({
+    String? id,
+    String? name,
+    String? secret,
+    int? createdAtMs,
+  }) {
+    return F2AFactor(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      secret: secret ?? this.secret,
+      createdAtMs: createdAtMs ?? this.createdAtMs,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'secret': secret,
+      'createdAtMs': createdAtMs,
+    };
+  }
+
+  static F2AFactor fromJson(Map<String, dynamic> json) {
+    return F2AFactor(
+      id: (json['id'] as String?)?.trim().isNotEmpty == true
+          ? (json['id'] as String).trim()
+          : DateTime.now().millisecondsSinceEpoch.toString(),
+      name: (json['name'] as String?)?.trim().isNotEmpty == true
+          ? (json['name'] as String).trim()
+          : '未命名设备',
+      secret: (json['secret'] as String?)?.trim() ?? '',
+      createdAtMs:
+          (json['createdAtMs'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
     );
   }
 }
@@ -219,6 +289,25 @@ class ConfigManager {
   static const String _planKey = 'aeterna_exam_plan';
   static const String _syncSettingsKey = 'aeterna_sync_settings';
   static const String _welcomeShownKey = 'aeterna_welcome_shown';
+
+  static bool looksLikePasswordHash(String value) {
+    return RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(value);
+  }
+
+  static String hashPassword(String password) {
+    return sha256.convert(utf8.encode(password)).toString();
+  }
+
+  static String normalizePasswordStorage(String passwordValue) {
+    final trimmed = passwordValue.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    if (looksLikePasswordHash(trimmed)) {
+      return trimmed.toLowerCase();
+    }
+    return hashPassword(trimmed);
+  }
 
   static DateTime _dateOnly(DateTime dt) => DateTime(dt.year, dt.month, dt.day);
 
@@ -416,7 +505,10 @@ class ConfigManager {
 
   static Future<void> saveDisplaySettings(DisplaySettings settings) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displaySettingsKey, jsonEncode(settings.toJson()));
+    final storageSettings = settings.copyWith(
+      exitPassword: normalizePasswordStorage(settings.exitPassword),
+    );
+    await prefs.setString(_displaySettingsKey, jsonEncode(storageSettings.toJson()));
   }
 
   static Future<DisplaySettings> loadDisplaySettings() async {
@@ -427,7 +519,17 @@ class ConfigManager {
     }
     try {
       final data = jsonDecode(jsonStr) as Map<String, dynamic>;
-      return DisplaySettings.fromJson(data);
+      final settings = DisplaySettings.fromJson(data);
+      final normalizedPassword = normalizePasswordStorage(settings.exitPassword);
+      if (normalizedPassword != settings.exitPassword) {
+        unawaited(
+          saveDisplaySettings(
+            settings.copyWith(exitPassword: normalizedPassword),
+          ),
+        );
+        return settings.copyWith(exitPassword: normalizedPassword);
+      }
+      return settings.copyWith(exitPassword: normalizedPassword);
     } catch (_) {
       return const DisplaySettings(fontScale: 1.0, roomLabel: '试室 A01');
     }

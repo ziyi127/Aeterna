@@ -12,6 +12,16 @@ Aeterna 是一个面向考场一体机/投影场景的考试看板系统，提�
 - 关键节点提醒：开考前、开考、结束前、结束
 - 动态主题：支持明暗模式与多套主题配色实时切换
 
+## GitHub Pages
+
+本仓库包含独立的 GitHub Pages 页面，用于 F2A 多重验证：
+
+- 页面入口：`pages/index.html`
+- 验证页：`pages/f2a/index.html`
+- 自动部署：`.github/workflows/pages.yml`
+
+部署后，仓库 Pages 站点会自动跳转到 F2A 页面。
+
 ## 技术栈
 
 - Flutter 3.x / Dart 3.x
@@ -19,6 +29,7 @@ Aeterna 是一个面向考场一体机/投影场景的考试看板系统，提�
 - `ntp`：网络时间同步
 - `window_manager`：桌面窗口控制
 - `url_launcher`：外链跳转（GitHub 主页/仓库地址）
+- `qr_flutter` / `crypto`：F2A 扫码页与动态验证码生成
 
 ## 快速开始
 

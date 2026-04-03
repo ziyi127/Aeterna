@@ -36,6 +36,7 @@ class FlutterWindow : public Win32Window {
       window_security_channel_;
 
   bool IsUiAccessEnabled() const;
+  double GetMonitorDpi() const;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

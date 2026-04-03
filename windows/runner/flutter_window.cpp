@@ -4,6 +4,7 @@
 
 #include <memory>
 
+#include <ShellScalingApi.h>
 #include <Windows.h>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -41,6 +42,10 @@ bool FlutterWindow::OnCreate() {
                  result) {
         if (call.method_name() == "isUiAccessEnabled") {
           result->Success(flutter::EncodableValue(IsUiAccessEnabled()));
+          return;
+        }
+        if (call.method_name() == "getMonitorDpi") {
+          result->Success(flutter::EncodableValue(GetMonitorDpi()));
           return;
         }
         result->NotImplemented();
@@ -111,4 +116,37 @@ bool FlutterWindow::IsUiAccessEnabled() const {
     return false;
   }
   return ui_access != 0;
+}
+
+double FlutterWindow::GetMonitorDpi() const {
+  constexpr double kFallbackDpi = 96.0;
+
+  HWND hwnd = const_cast<FlutterWindow*>(this)->GetHandle();
+  if (hwnd != nullptr) {
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if (monitor != nullptr) {
+      UINT dpi_x = 0;
+      UINT dpi_y = 0;
+      if (SUCCEEDED(GetDpiForMonitor(monitor, MDT_RAW_DPI, &dpi_x, &dpi_y)) &&
+          dpi_x > 0) {
+        return static_cast<double>(dpi_x);
+      }
+      if (SUCCEEDED(
+              GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y)) &&
+          dpi_x > 0) {
+        return static_cast<double>(dpi_x);
+      }
+    }
+  }
+
+  HDC screen_dc = GetDC(nullptr);
+  if (screen_dc == nullptr) {
+    return kFallbackDpi;
+  }
+  const int dpi = GetDeviceCaps(screen_dc, LOGPIXELSX);
+  ReleaseDC(nullptr, screen_dc);
+  if (dpi <= 0) {
+    return kFallbackDpi;
+  }
+  return static_cast<double>(dpi);
 }

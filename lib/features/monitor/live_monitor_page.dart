@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:aeterna/core/config/config_manager.dart';
+import 'package:aeterna/core/security/f2a_totp.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
 import 'package:aeterna/shared/widgets/exit_password_dialog.dart';
@@ -407,7 +408,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       if (!mounted) {
         return;
       }
-      if (result != _settings.exitPassword) {
+      if (!_matchesLocalPassword(result ?? '')) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('密码错误，无法打开设置')));
@@ -448,10 +449,31 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       if (!mounted) {
         return;
       }
-      if (result != _settings.exitPassword) {
+      if (!_matchesLocalPassword(result ?? '')) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('密码错误，无法退出')));
+        return;
+      }
+    }
+
+    if (_settings.f2aEnabled && _settings.f2aFactors.isNotEmpty) {
+      final code = await DigitInputDialog.show(
+        context,
+        title: '输入 F2A 动态验证码',
+        labelText: '6 位动态验证码',
+        hintText: '来自手机扫码网页',
+        confirmText: '验证',
+        autofocus: true,
+      );
+
+      if (!_matchesF2aCode(code ?? '', controller.now)) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('F2A 验证失败，无法退出')));
         return;
       }
     }
@@ -463,6 +485,23 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
+  }
+
+  bool _matchesLocalPassword(String enteredPassword) {
+    final storedHash = _settings.exitPassword.trim();
+    if (storedHash.isEmpty) {
+      return false;
+    }
+    final enteredHash = ConfigManager.hashPassword(enteredPassword);
+    return enteredHash == storedHash;
+  }
+
+  bool _matchesF2aCode(String enteredCode, DateTime at) {
+    return F2ATotp.verifyCode(
+      code: enteredCode,
+      factors: _settings.f2aFactors,
+      at: at,
+    );
   }
 
   Future<void> _openDisplaySettingsDialog() async {

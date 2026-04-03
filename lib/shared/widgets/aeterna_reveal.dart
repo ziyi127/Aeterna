@@ -8,9 +8,9 @@ class AeternaReveal extends StatefulWidget {
     super.key,
     required this.child,
     this.delay = Duration.zero,
-    this.duration = AeternaTokens.motionDurationNormal,
+    this.duration = AeternaTokens.motionDurationFast,
     this.curve = AeternaTokens.motionCurveStandard,
-    this.beginOffset = const Offset(0, 0.04),
+    this.beginOffset = const Offset(0, 0.015),
   });
 
   final Widget child;
@@ -30,6 +30,14 @@ class _AeternaRevealState extends State<AeternaReveal> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final disableAnimations =
+          MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+      if (disableAnimations) {
+        if (mounted) {
+          setState(() => _visible = true);
+        }
+        return;
+      }
       if (widget.delay > Duration.zero) {
         await Future<void>.delayed(widget.delay);
       }

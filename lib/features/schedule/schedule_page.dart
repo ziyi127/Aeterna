@@ -114,7 +114,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 onSaveMeta: () => _saveMeta(controller),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AeternaTokens.sectionSpacing),
             Expanded(
               child: AeternaReveal(
                 delay: const Duration(milliseconds: 120),
@@ -174,41 +174,38 @@ class _SchedulePageState extends State<SchedulePage> {
 
     return ListView.separated(
       itemCount: filteredExams.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 14),
+      separatorBuilder: (_, _) => const SizedBox(height: AeternaTokens.sectionSpacing),
       itemBuilder: (context, index) {
         final slot = filteredExams[index];
         final state = slot.stateAt(controller.now);
         final originalIndex = controller.exams.indexOf(slot);
 
-        return AeternaReveal(
-          delay: Duration(milliseconds: 40 + index * 35),
-          child: SurfaceCard(
-            child: ListTile(
-              minTileHeight: AeternaTokens.touchMinHeight,
-              contentPadding: EdgeInsets.zero,
-              leading: SizedBox(
-                width: width < 700 ? 90 : 120,
-                child: Text(
-                  slot.windowText(),
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+        return SurfaceCard(
+          child: ListTile(
+            minTileHeight: AeternaTokens.touchMinHeight,
+            contentPadding: EdgeInsets.zero,
+            leading: SizedBox(
+              width: width < 700 ? 90 : 120,
+              child: Text(
+                slot.windowText(),
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-              title: Text(
-                slot.subject,
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              subtitle: _editMode ? const Text('可编辑：点击铅笔修改') : null,
-              trailing: _editMode
-                  ? _EditActions(
-                      onEdit: () => _openEditor(
-                        controller,
-                        existingIndex: originalIndex,
-                        existing: slot,
-                      ),
-                      onDelete: () => controller.removeExam(originalIndex),
-                    )
-                  : _StateBadge(state: state),
             ),
+            title: Text(
+              slot.subject,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            subtitle: _editMode ? const Text('可编辑：点击铅笔修改') : null,
+            trailing: _editMode
+                ? _EditActions(
+                    onEdit: () => _openEditor(
+                      controller,
+                      existingIndex: originalIndex,
+                      existing: slot,
+                    ),
+                    onDelete: () => controller.removeExam(originalIndex),
+                  )
+                : _StateBadge(state: state),
           ),
         );
       },
@@ -962,7 +959,7 @@ class _MaterialRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AeternaTokens.radiusCompact,
       ),
       child: Row(
         children: [
@@ -1118,7 +1115,7 @@ class _StateBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: AeternaTokens.radiusControl,
         color: color.withValues(alpha: 0.18),
       ),
       child: Text(

@@ -1136,8 +1136,7 @@ class _SubjectPanel extends StatelessWidget {
                                         color:
                                             scheme.primaryContainer
                                                 .withValues(alpha: 0.4),
-                                        borderRadius:
-                                            BorderRadius.circular(6),
+                                        borderRadius: AeternaTokens.radiusCompact,
                                         border: Border.all(
                                           color: scheme.primary
                                               .withValues(alpha: 0.4),
@@ -1333,7 +1332,7 @@ class _AutoScrollExamListState extends State<_AutoScrollExamList> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: AeternaTokens.radiusControl,
           ),
           child: Row(
             children: [

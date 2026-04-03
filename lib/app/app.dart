@@ -78,9 +78,11 @@ class _AeternaAppState extends State<AeternaApp> {
 
   Future<void> _loadSyncPreferences() async {
     final sync = await ConfigManager.loadSyncSettings();
-    _controller.setNtpAddress(sync.ntpAddress);
+    _controller.setNtpServers(sync.ntpServers);
     _controller.setMode(sync.mode);
-    _controller.setMaxDriftStepMs(sync.maxDriftStepMs);
+    _controller.setManualOffsetMs(sync.manualOffsetMs);
+    _controller.setAutoSyncEnabled(sync.autoSyncEnabled);
+    _controller.setAutoSyncIntervalMinutes(sync.autoSyncIntervalMinutes);
   }
 
   Future<void> _loadWelcomeState() async {
@@ -350,7 +352,7 @@ class _WelcomeOverlay extends StatelessWidget {
                       ),
                       decoration: BoxDecoration(
                         color: scheme.primary.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(18),
+                        borderRadius: AeternaTokens.radiusControl,
                         border: Border.all(
                           color: scheme.primary.withValues(alpha: 0.35),
                         ),
@@ -369,7 +371,7 @@ class _WelcomeOverlay extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: AeternaTokens.radiusControl,
                       border: Border.all(
                         color: Colors.white.withValues(alpha: 0.22),
                       ),

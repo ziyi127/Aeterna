@@ -253,32 +253,52 @@ class F2AFactor {
 
 class SyncSettings {
   const SyncSettings({
-    required this.ntpAddress,
+    required this.ntpServers,
     required this.modeKey,
-    required this.maxDriftStepMs,
+    required this.manualOffsetMs,
+    required this.autoSyncEnabled,
+    required this.autoSyncIntervalMinutes,
   });
 
-  final String ntpAddress;
+  final List<String> ntpServers;
   final String modeKey;
-  final int maxDriftStepMs;
+  final int manualOffsetMs;
+  final bool autoSyncEnabled;
+  final int autoSyncIntervalMinutes;
 
   TimeSourceMode get mode => TimeSourceModeLabel.fromKey(modeKey);
 
   Map<String, dynamic> toJson() {
     return {
-      'ntpAddress': ntpAddress,
+      'ntpServers': ntpServers,
       'modeKey': modeKey,
-      'maxDriftStepMs': maxDriftStepMs,
+      'manualOffsetMs': manualOffsetMs,
+      'autoSyncEnabled': autoSyncEnabled,
+      'autoSyncIntervalMinutes': autoSyncIntervalMinutes,
     };
   }
 
   static SyncSettings fromJson(Map<String, dynamic> json) {
+    final serversRaw = (json['ntpServers'] as List?)?.whereType<String>().toList() ??
+        <String>[];
+    final legacyAddress = (json['ntpAddress'] as String?)?.trim() ?? '';
+    final servers = serversRaw
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
+    final mergedServers = servers.isNotEmpty
+        ? servers
+        : (legacyAddress.isEmpty ? const <String>[] : <String>[legacyAddress]);
+
     return SyncSettings(
-      ntpAddress: (json['ntpAddress'] as String?)?.trim() ?? '',
+      ntpServers: mergedServers,
       modeKey: (json['modeKey'] as String?)?.trim().isNotEmpty == true
           ? (json['modeKey'] as String).trim()
           : TimeSourceMode.offlineManual.key,
-      maxDriftStepMs: (json['maxDriftStepMs'] as num?)?.toInt() ?? 250,
+      manualOffsetMs: (json['manualOffsetMs'] as num?)?.toInt() ?? 0,
+      autoSyncEnabled: (json['autoSyncEnabled'] as bool?) ?? true,
+      autoSyncIntervalMinutes:
+          ((json['autoSyncIntervalMinutes'] as num?)?.toInt() ?? 5).clamp(1, 180),
     );
   }
 }
@@ -545,9 +565,11 @@ class ConfigManager {
     final jsonStr = prefs.getString(_syncSettingsKey);
     if (jsonStr == null) {
       return const SyncSettings(
-        ntpAddress: '',
+        ntpServers: <String>[],
         modeKey: 'offline-manual',
-        maxDriftStepMs: 250,
+        manualOffsetMs: 0,
+        autoSyncEnabled: true,
+        autoSyncIntervalMinutes: 5,
       );
     }
     try {
@@ -555,9 +577,11 @@ class ConfigManager {
       return SyncSettings.fromJson(data);
     } catch (_) {
       return const SyncSettings(
-        ntpAddress: '',
+        ntpServers: <String>[],
         modeKey: 'offline-manual',
-        maxDriftStepMs: 250,
+        manualOffsetMs: 0,
+        autoSyncEnabled: true,
+        autoSyncIntervalMinutes: 5,
       );
     }
   }

@@ -132,7 +132,7 @@ abstract final class AppTheme {
           minimumSize: const Size(120, AeternaTokens.touchMinHeight),
           animationDuration: AeternaTokens.motionDurationNormal,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+            borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
           ),
         ),
       ),
@@ -141,7 +141,7 @@ abstract final class AppTheme {
           minimumSize: const Size(96, AeternaTokens.touchMinHeight),
           animationDuration: AeternaTokens.motionDurationNormal,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+            borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
           ),
         ),
       ),
@@ -150,7 +150,7 @@ abstract final class AppTheme {
           minimumSize: const Size(96, AeternaTokens.touchMinHeight),
           animationDuration: AeternaTokens.motionDurationNormal,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+            borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
           ),
         ),
       ),
@@ -162,7 +162,7 @@ abstract final class AppTheme {
           ),
           shape: WidgetStateProperty.all(
             RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+              borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
             ),
           ),
         ),
@@ -175,14 +175,14 @@ abstract final class AppTheme {
           ),
           shape: WidgetStateProperty.all(
             RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+              borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
             ),
           ),
         ),
       ),
       chipTheme: base.chipTheme.copyWith(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
         ),
       ),
       snackBarTheme: SnackBarThemeData(
@@ -190,7 +190,7 @@ abstract final class AppTheme {
         backgroundColor: colorScheme.inverseSurface,
         contentTextStyle: TextStyle(color: colorScheme.onInverseSurface),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -201,15 +201,15 @@ abstract final class AppTheme {
           color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
           borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
           borderSide: BorderSide(color: colorScheme.outlineVariant),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+          borderRadius: BorderRadius.circular(AeternaTokens.controlRadius),
           borderSide: BorderSide(color: colorScheme.primary, width: 1.5),
         ),
         contentPadding: const EdgeInsets.symmetric(

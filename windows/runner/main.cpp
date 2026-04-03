@@ -293,13 +293,22 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
   }
 
   const auto values = ParseKeyValueLines(manifest_text);
-  const std::wstring version = Utf16FromUtf8(values["version"].c_str());
-  const std::wstring archive_path = Utf16FromUtf8(values["archivePath"].c_str());
-  const std::wstring target_dir = Utf16FromUtf8(values["targetDir"].c_str());
+  const auto read_value = [&values](const char* key) -> std::string {
+    const auto it = values.find(key);
+    if (it == values.end()) {
+      return std::string();
+    }
+    return it->second;
+  };
+
+  const std::wstring version = Utf16FromUtf8(read_value("version").c_str());
+  const std::wstring archive_path = Utf16FromUtf8(read_value("archivePath").c_str());
+  const std::wstring target_dir = Utf16FromUtf8(read_value("targetDir").c_str());
+  const std::string executable_name_raw = read_value("appExecutableName");
   const std::wstring app_executable_name =
-      values.count("appExecutableName")
-          ? Utf16FromUtf8(values["appExecutableName"].c_str())
-          : L"aeterna.exe";
+      executable_name_raw.empty()
+          ? L"aeterna.exe"
+          : Utf16FromUtf8(executable_name_raw.c_str());
 
   if (version.empty() || archive_path.empty() || target_dir.empty()) {
     ::MessageBoxW(

@@ -44,42 +44,27 @@ class HomeLauncherPage extends StatelessWidget {
                     childAspectRatio: tileAspect,
                     physics: const NeverScrollableScrollPhysics(),
                     children: [
-                      AeternaReveal(
-                        delay: const Duration(milliseconds: 100),
-                        child: DashboardTile(
-                          title: '放映 Projector',
-                          subtitle: '进入考场看板，展示实时考试进度',
-                          icon: Icons.cast_for_education,
-                          highlight: true,
-                          onTap: () =>
-                              Navigator.of(context).pushNamed('/monitor'),
-                        ),
+                      DashboardTile(
+                        title: '放映 Projector',
+                        subtitle: '进入考场看板，展示实时考试进度',
+                        icon: Icons.cast_for_education,
+                        highlight: true,
+                        onTap: () => Navigator.of(context).pushNamed('/monitor'),
                       ),
-                      AeternaReveal(
-                        delay: const Duration(milliseconds: 160),
-                        child: DashboardTile(
-                          title: '计划 Schedule',
-                          subtitle: '今日 ${controller.exams.length} 场考试，支持直接编辑计划',
-                          icon: Icons.view_timeline_outlined,
-                          onTap: () =>
-                              Navigator.of(context).pushNamed('/schedule'),
-                        ),
+                      DashboardTile(
+                        title: '计划 Schedule',
+                        subtitle: '今日 ${controller.exams.length} 场考试，支持直接编辑计划',
+                        icon: Icons.view_timeline_outlined,
+                        onTap: () => Navigator.of(context).pushNamed('/schedule'),
                       ),
-                      AeternaReveal(
-                        delay: const Duration(milliseconds: 220),
-                        child: DashboardTile(
-                          title: '设置 Settings',
-                          subtitle: '时间同步与系统参数',
-                          icon: Icons.settings_outlined,
-                          onTap: () =>
-                              Navigator.of(context).pushNamed('/settings'),
-                        ),
+                      DashboardTile(
+                        title: '设置 Settings',
+                        subtitle: '时间同步与系统参数',
+                        icon: Icons.settings_outlined,
+                        onTap: () => Navigator.of(context).pushNamed('/settings'),
                       ),
-                      AeternaReveal(
-                        delay: const Duration(milliseconds: 280),
-                        child: _AboutTile(
-                          onTap: () => Navigator.of(context).pushNamed('/about'),
-                        ),
+                      _AboutTile(
+                        onTap: () => Navigator.of(context).pushNamed('/about'),
                       ),
                     ],
                   ),

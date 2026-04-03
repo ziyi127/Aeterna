@@ -31,13 +31,12 @@ class DashboardTile extends StatelessWidget {
       style: highlight ? SurfaceCardStyle.elevated : SurfaceCardStyle.filled,
       padding: const EdgeInsets.all(24),
       child: InkWell(
-        borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+        borderRadius: AeternaTokens.radiusSurface,
         onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 260),
+        child: Container(
           decoration: BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
+            borderRadius: AeternaTokens.radiusSurface,
           ),
           padding: const EdgeInsets.all(4),
           child: Row(

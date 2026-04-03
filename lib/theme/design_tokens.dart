@@ -7,12 +7,15 @@ abstract final class AeternaTokens {
   static const Color countdownBackground = Color(0xFF103B73);
   static const Color countdownForeground = Color(0xFFFFFFFF);
 
-  static const double superRadius = 32;
+  static const double superRadius = 24;
+  static const double controlRadius = 16;
+  static const double compactRadius = 12;
   static const double touchMinHeight = 56;
   static const double wideProgressHeight = 12;
 
   static const EdgeInsets pagePadding = EdgeInsets.all(24);
   static const EdgeInsets sectionGap = EdgeInsets.all(16);
+  static const double sectionSpacing = 16;
 
   static const String timeFontFamily = 'monospace';
 
@@ -24,7 +27,9 @@ abstract final class AeternaTokens {
   static const Curve motionCurveStandard = Curves.easeOutCubic;
   static const Curve motionCurveEmphasized = Curves.easeOutQuart;
 
-  static BorderRadius get radius32 => BorderRadius.circular(superRadius);
+  static BorderRadius get radiusSurface => BorderRadius.circular(superRadius);
+  static BorderRadius get radiusControl => BorderRadius.circular(controlRadius);
+  static BorderRadius get radiusCompact => BorderRadius.circular(compactRadius);
 
   static EdgeInsets pagePaddingFor(double width) {
     if (width >= 2200) {

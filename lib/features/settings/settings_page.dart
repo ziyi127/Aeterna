@@ -46,11 +46,15 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _saving = false;
   bool _syncingNow = false;
   bool _themeUpdating = false;
-  int _maxDriftStepMs = 250;
+  int _manualOffsetMs = 0;
+  bool _autoSyncEnabled = true;
+  int _autoSyncIntervalMinutes = 5;
   String _initialNtp = '';
   String _initialRoom = '试室 A01';
   double _initialFontScale = 1.0;
-  int _initialMaxDriftStepMs = 250;
+  int _initialManualOffsetMs = 0;
+  bool _initialAutoSyncEnabled = true;
+  int _initialAutoSyncIntervalMinutes = 5;
   Timer? _autoSaveDebounce;
   ThemeMode _themeMode = ThemeMode.system;
   ThemePalette _themePalette = ThemePalette.emerald;
@@ -101,11 +105,15 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_seededFromState) {
       return;
     }
-    _ntpController.text = TimerScope.of(context).ntpAddress;
+    _ntpController.text = TimerScope.of(context).ntpServers.join('\n');
     _initialNtp = _ntpController.text;
     _lastModeHint = TimerScope.of(context).mode;
-    _maxDriftStepMs = TimerScope.of(context).maxDriftStepMs;
-    _initialMaxDriftStepMs = _maxDriftStepMs;
+    _manualOffsetMs = TimerScope.of(context).manualOffsetMs;
+    _initialManualOffsetMs = _manualOffsetMs;
+    _autoSyncEnabled = TimerScope.of(context).autoSyncEnabled;
+    _initialAutoSyncEnabled = _autoSyncEnabled;
+    _autoSyncIntervalMinutes = TimerScope.of(context).autoSyncIntervalMinutes;
+    _initialAutoSyncIntervalMinutes = _autoSyncIntervalMinutes;
     _seededFromState = true;
   }
 
@@ -134,8 +142,6 @@ class _SettingsPageState extends State<SettingsPage> {
       _fontScale = settings.fontScale;
       _initialRoom = settings.roomLabel;
       _initialFontScale = settings.fontScale;
-      _maxDriftStepMs = settings.maxDriftStepMs;
-      _initialMaxDriftStepMs = settings.maxDriftStepMs;
       _themeMode = _themeModeFromKey(settings.themeMode);
       _themePalette = ThemePaletteLabel.fromKey(settings.themePalette);
       _initialThemeMode = _themeMode;
@@ -253,7 +259,6 @@ class _SettingsPageState extends State<SettingsPage> {
   bool get _displayDirty {
     return _roomController.text.trim() != _initialRoom ||
         (_fontScale - _initialFontScale).abs() > 0.0001 ||
-        _maxDriftStepMs != _initialMaxDriftStepMs ||
         _themeMode != _initialThemeMode ||
       _themePalette != _initialThemePalette ||
       _exitPasswordEnabled != _initialExitPasswordEnabled ||
@@ -263,7 +268,11 @@ class _SettingsPageState extends State<SettingsPage> {
       _f2aSignature(_f2aFactors) != _initialF2aSignature;
   }
 
-  bool get _syncDirty => _ntpController.text.trim() != _initialNtp;
+  bool get _syncDirty =>
+      _ntpController.text.trim() != _initialNtp ||
+      _manualOffsetMs != _initialManualOffsetMs ||
+      _autoSyncEnabled != _initialAutoSyncEnabled ||
+      _autoSyncIntervalMinutes != _initialAutoSyncIntervalMinutes;
 
   bool _hasUnsavedChanges() => _displayDirty || _syncDirty;
 
@@ -337,7 +346,6 @@ class _SettingsPageState extends State<SettingsPage> {
         roomLabel: room.isEmpty ? '试室 A01' : room,
         themeMode: _themeModeKey(_themeMode),
         themePalette: _themePalette.key,
-        maxDriftStepMs: _maxDriftStepMs,
         exitPasswordEnabled: _exitPasswordEnabled,
         exitPassword: _exitPassword,
         safeMode: _safeMode,
@@ -351,7 +359,6 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _initialRoom = room.isEmpty ? '试室 A01' : room;
       _initialFontScale = _fontScale;
-      _initialMaxDriftStepMs = _maxDriftStepMs;
       _initialThemeMode = _themeMode;
       _initialThemePalette = _themePalette;
       _initialExitPasswordEnabled = _exitPasswordEnabled;
@@ -360,6 +367,14 @@ class _SettingsPageState extends State<SettingsPage> {
       _initialF2aEnabled = _f2aEnabled;
       _initialF2aSignature = _f2aSignature(_f2aFactors);
     });
+  }
+
+  List<String> _parseNtpServers() {
+    return _ntpController.text
+        .split(RegExp(r'[\n,;]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<void> _setOrChangeExitPassword() async {
@@ -439,7 +454,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   String _buildF2aPageUrl({required String secret}) {
-    return Uri.https('ziyi127.github.io', '/Aeterna/f2a/index.html', {
+    return Uri.https('ziyi127.github.io', '/Aeterna/', {
+      'entry': 'f2a',
       'secret': secret,
     }).toString();
   }
@@ -516,7 +532,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: AeternaTokens.radiusControl,
                       border: Border.all(
                         color: Theme.of(context).colorScheme.outlineVariant,
                       ),
@@ -712,15 +728,23 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _saveSyncSettings(TimerController controller) {
-    controller.setNtpAddress(_ntpController.text);
+    final servers = _parseNtpServers();
+    controller.setNtpServers(servers);
     controller.setMode(_lastModeHint);
-    controller.setMaxDriftStepMs(_maxDriftStepMs);
+    controller.setManualOffsetMs(_manualOffsetMs);
+    controller.setAutoSyncEnabled(_autoSyncEnabled);
+    controller.setAutoSyncIntervalMinutes(_autoSyncIntervalMinutes);
     _initialNtp = _ntpController.text.trim();
+    _initialManualOffsetMs = _manualOffsetMs;
+    _initialAutoSyncEnabled = _autoSyncEnabled;
+    _initialAutoSyncIntervalMinutes = _autoSyncIntervalMinutes;
     ConfigManager.saveSyncSettings(
       SyncSettings(
-        ntpAddress: _initialNtp,
+        ntpServers: servers,
         modeKey: _lastModeHint.key,
-        maxDriftStepMs: _maxDriftStepMs,
+        manualOffsetMs: _manualOffsetMs,
+        autoSyncEnabled: _autoSyncEnabled,
+        autoSyncIntervalMinutes: _autoSyncIntervalMinutes,
       ),
     );
   }
@@ -875,9 +899,16 @@ class _SettingsPageState extends State<SettingsPage> {
                         });
                       },
                       decoration: const InputDecoration(
-                        labelText: 'NTP 地址',
-                        hintText: '例如: pool.ntp.org 或 192.168.1.2',
+                        labelText: 'NTP 服务器列表',
+                        hintText: '每行一个地址，例如:\npool.ntp.org\ntime.cloudflare.com\nntp.aliyun.com',
                       ),
+                      minLines: 3,
+                      maxLines: 5,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '应用只会校正 Aeterna 内部时间偏移，不会修改系统时间。',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 16),
                     SingleChildScrollView(
@@ -920,11 +951,47 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('自动同步'),
+                      subtitle: Text(
+                        _autoSyncEnabled
+                            ? '每 $_autoSyncIntervalMinutes 分钟自动同步一次'
+                            : '已关闭自动同步，仅手动同步',
+                      ),
+                      value: _autoSyncEnabled,
+                      onChanged: (enabled) {
+                        setState(() => _autoSyncEnabled = enabled);
+                        controller.setAutoSyncEnabled(enabled);
+                        _scheduleAutoSave(() async {
+                          _saveSyncSettings(controller);
+                        });
+                      },
+                    ),
+                    if (_autoSyncEnabled) ...[
+                      Text('自动同步间隔: $_autoSyncIntervalMinutes 分钟'),
+                      Slider(
+                        min: 1,
+                        max: 180,
+                        divisions: 179,
+                        value: _autoSyncIntervalMinutes.toDouble(),
+                        label: '$_autoSyncIntervalMinutes 分钟',
+                        onChanged: (value) {
+                          final minutes = value.round();
+                          setState(() => _autoSyncIntervalMinutes = minutes);
+                          controller.setAutoSyncIntervalMinutes(minutes);
+                          _scheduleAutoSave(() async {
+                            _saveSyncSettings(controller);
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                    ],
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: syncColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: AeternaTokens.radiusControl,
                         border: Border.all(
                           color: syncColor.withValues(alpha: 0.5),
                         ),
@@ -952,24 +1019,71 @@ class _SettingsPageState extends State<SettingsPage> {
                           ? '最近同步: 尚未同步'
                           : '最近同步: ${syncAt.hour.toString().padLeft(2, '0')}:${syncAt.minute.toString().padLeft(2, '0')}:${syncAt.second.toString().padLeft(2, '0')}',
                     ),
+                    if (controller.lastSyncServer.isNotEmpty)
+                      Text(
+                        '最近成功服务器: ${controller.lastSyncServer}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     const SizedBox(height: 10),
-                    Text('漂移校正步长: ${_maxDriftStepMs}ms/次'),
-                    Slider(
-                      min: 20,
-                      max: 1000,
-                      divisions: 49,
-                      value: _maxDriftStepMs.toDouble(),
-                      label: '${_maxDriftStepMs}ms',
-                      onChanged: (value) {
-                        setState(() => _maxDriftStepMs = value.round());
-                        controller.setMaxDriftStepMs(_maxDriftStepMs);
-                        _scheduleAutoSave(() async {
-                          _saveSyncSettings(controller);
-                        });
-                      },
+                    Text('手动时间偏移: ${_manualOffsetMs >= 0 ? '+' : ''}${_manualOffsetMs}ms'),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton(
+                          onPressed: () {
+                            setState(() => _manualOffsetMs -= 100);
+                            controller.setManualOffsetMs(_manualOffsetMs);
+                            _scheduleAutoSave(() async {
+                              _saveSyncSettings(controller);
+                            });
+                          },
+                          child: const Text('-100ms'),
+                        ),
+                        OutlinedButton(
+                          onPressed: () {
+                            setState(() => _manualOffsetMs -= 10);
+                            controller.setManualOffsetMs(_manualOffsetMs);
+                            _scheduleAutoSave(() async {
+                              _saveSyncSettings(controller);
+                            });
+                          },
+                          child: const Text('-10ms'),
+                        ),
+                        OutlinedButton(
+                          onPressed: () {
+                            setState(() => _manualOffsetMs += 10);
+                            controller.setManualOffsetMs(_manualOffsetMs);
+                            _scheduleAutoSave(() async {
+                              _saveSyncSettings(controller);
+                            });
+                          },
+                          child: const Text('+10ms'),
+                        ),
+                        OutlinedButton(
+                          onPressed: () {
+                            setState(() => _manualOffsetMs += 100);
+                            controller.setManualOffsetMs(_manualOffsetMs);
+                            _scheduleAutoSave(() async {
+                              _saveSyncSettings(controller);
+                            });
+                          },
+                          child: const Text('+100ms'),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setState(() => _manualOffsetMs = 0);
+                            controller.setManualOffsetMs(0);
+                            _scheduleAutoSave(() async {
+                              _saveSyncSettings(controller);
+                            });
+                          },
+                          child: const Text('重置手动偏移'),
+                        ),
+                      ],
                     ),
                     Text(
-                      '当前时钟偏移: ${controller.currentOffsetMs}ms  |  最近一次校正: ${controller.lastAppliedDriftMs}ms',
+                      '当前总偏移: ${controller.currentOffsetMs}ms  |  网络偏移: ${controller.networkOffsetMs}ms  |  最近同步修正: ${controller.lastAppliedSyncDeltaMs}ms',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 12),

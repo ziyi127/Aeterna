@@ -17,9 +17,7 @@ class SurfaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(AeternaTokens.superRadius),
-    );
+    final shape = RoundedRectangleBorder(borderRadius: AeternaTokens.radiusSurface);
 
     final content = Padding(padding: padding, child: child);
 

@@ -45,7 +45,7 @@ class UpdateService {
         );
       }
 
-      if (!_isNewerVersion(release.version, currentVersion)) {
+      if (!isNewerAppVersion(release.version, currentVersion)) {
         return UpdateCheckOutcome(
           platformSupported: true,
           currentVersion: currentVersion,
@@ -241,7 +241,13 @@ class UpdateService {
     return values;
   }
 
-  static bool _isNewerVersion(String latest, String current) {
+  static int compareAppVersions(String latest, String current) {
+    final latestVersion = _Version.parse(latest);
+    final currentVersion = _Version.parse(current);
+    return latestVersion.compareTo(currentVersion);
+  }
+
+  static bool isNewerAppVersion(String latest, String current) {
     final latestVersion = _Version.parse(latest);
     final currentVersion = _Version.parse(current);
     return latestVersion.compareTo(currentVersion) > 0;
@@ -323,6 +329,7 @@ class _Version implements Comparable<_Version> {
     required this.minor,
     required this.patch,
     required this.preRelease,
+    required this.build,
   });
 
   factory _Version.parse(String value) {
@@ -342,6 +349,7 @@ class _Version implements Comparable<_Version> {
       minor: parsePart(1),
       patch: parsePart(2),
       preRelease: coreParts.length > 1 ? coreParts.sublist(1).join('-') : '',
+      build: _parseBuildNumber(trimmed),
     );
   }
 
@@ -349,6 +357,7 @@ class _Version implements Comparable<_Version> {
   final int minor;
   final int patch;
   final String preRelease;
+  final int build;
 
   @override
   int compareTo(_Version other) {
@@ -367,8 +376,57 @@ class _Version implements Comparable<_Version> {
     if (preRelease.isNotEmpty && other.preRelease.isEmpty) {
       return -1;
     }
-    return preRelease.compareTo(other.preRelease);
+    final preReleaseComparison = _comparePrerelease(preRelease, other.preRelease);
+    if (preReleaseComparison != 0) {
+      return preReleaseComparison;
+    }
+    return build.compareTo(other.build);
   }
+
+  static int _comparePrerelease(String left, String right) {
+    final leftParts = left.split(RegExp(r'[.-]')).where((part) => part.isNotEmpty).toList();
+    final rightParts = right.split(RegExp(r'[.-]')).where((part) => part.isNotEmpty).toList();
+    final count = leftParts.length < rightParts.length ? leftParts.length : rightParts.length;
+    for (var index = 0; index < count; index++) {
+      final leftPart = leftParts[index];
+      final rightPart = rightParts[index];
+      final leftNumber = int.tryParse(leftPart);
+      final rightNumber = int.tryParse(rightPart);
+      if (leftNumber != null && rightNumber != null) {
+        if (leftNumber != rightNumber) {
+          return leftNumber.compareTo(rightNumber);
+        }
+        continue;
+      }
+      if (leftNumber != null && rightNumber == null) {
+        return -1;
+      }
+      if (leftNumber == null && rightNumber != null) {
+        return 1;
+      }
+      final textComparison = leftPart.compareTo(rightPart);
+      if (textComparison != 0) {
+        return textComparison;
+      }
+    }
+    return leftParts.length.compareTo(rightParts.length);
+  }
+
+  static int _parseBuildNumber(String value) {
+    final buildPart = value.split('+').skip(1).firstOrNull ?? '';
+    if (buildPart.isEmpty) {
+      return 0;
+    }
+    return int.tryParse(buildPart) ?? 0;
+  }
+}
+
+bool isNewerAppVersion(String latest, String current) {
+  return UpdateService.isNewerAppVersion(latest, current);
+}
+
+int compareAppVersions(String latest, String current) {
+  return UpdateService.compareAppVersions(latest, current);
 }
 
 extension _FirstOrNull<E> on Iterable<E> {

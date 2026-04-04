@@ -270,10 +270,10 @@ jobs:
         with:
           path: artifacts
 
-      - name: Install 7zip
+      - name: Install zip
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full zstd
+          sudo apt-get install -y zip zstd
 
       - name: Archive artifacts
         run: |
@@ -284,7 +284,7 @@ jobs:
               echo "Skip report artifact: $dir"
               continue
             fi
-            7z a -t7z -mx=9 -m0=lzma2 -ms=on "${dir}.7z" "$dir"
+            zip -r -9 "${dir}.zip" "$dir"
           done
 
       - name: Archive Windows installer package
@@ -297,7 +297,7 @@ jobs:
           generate_release_notes: true
           overwrite_files: true
           files: |
-            artifacts/*.7z
+            artifacts/*.zip
             artifacts/*.tar.zst
             artifacts/aeterna-windows-installer/*.exe
         env:

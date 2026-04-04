@@ -40,6 +40,8 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 # Avoid linker-generated UAC manifest merging conflicts with runner.exe.manifest
 # (notably when uiAccess is set), which can fail mt.exe in CI.
 if(MSVC)
+  # Ensure UTF-8 source decoding so Chinese literals in MessageBoxW remain readable.
+  target_compile_options(${BINARY_NAME} PRIVATE "/utf-8")
   target_link_options(${BINARY_NAME} PRIVATE "/MANIFESTUAC:NO")
 endif()
 

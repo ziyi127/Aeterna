@@ -25,7 +25,7 @@ Pages 地址：`https://ziyi127.github.io/Aeterna/`
 - `ntp`：网络时间同步
 - `window_manager`：桌面窗口控制
 - `url_launcher`：外链跳转（GitHub 主页/仓库地址）
-- `qr_flutter` / `crypto`：F2A 扫码页与动态验证码生成
+- `qr_flutter` / `crypto`：2FA 扫码页与动态验证码生成
 
 ## 快速开始
 

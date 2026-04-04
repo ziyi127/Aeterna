@@ -3,7 +3,7 @@ import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:aeterna/core/config/config_manager.dart';
-import 'package:aeterna/core/security/f2a_totp.dart';
+import 'package:aeterna/core/security/two_factor_totp.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
 import 'package:aeterna/shared/widgets/exit_password_dialog.dart';
@@ -457,23 +457,23 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       }
     }
 
-    if (_settings.f2aEnabled && _settings.f2aFactors.isNotEmpty) {
+    if (_settings.twoFactorEnabled && _settings.twoFactorEntries.isNotEmpty) {
       final code = await DigitInputDialog.show(
         context,
-        title: '输入 F2A 动态验证码',
+        title: '输入 2FA 动态验证码',
         labelText: '6 位动态验证码',
         hintText: '来自手机扫码网页',
         confirmText: '验证',
         autofocus: true,
       );
 
-      if (!_matchesF2aCode(code ?? '', controller.now)) {
+      if (!_matchesTwoFactorCode(code ?? '', controller.now)) {
         if (!mounted) {
           return;
         }
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('F2A 验证失败，无法退出')));
+        ).showSnackBar(const SnackBar(content: Text('2FA 验证失败，无法退出')));
         return;
       }
     }
@@ -496,10 +496,10 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     return enteredHash == storedHash;
   }
 
-  bool _matchesF2aCode(String enteredCode, DateTime at) {
-    return F2ATotp.verifyCode(
+  bool _matchesTwoFactorCode(String enteredCode, DateTime at) {
+    return TwoFactorTotp.verifyCode(
       code: enteredCode,
-      factors: _settings.f2aFactors,
+      factors: _settings.twoFactorEntries,
       at: at,
     );
   }

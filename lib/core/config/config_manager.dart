@@ -117,8 +117,8 @@ class DisplaySettings {
     this.exitPasswordEnabled = false,
     this.exitPassword = '',
     this.safeMode = false,
-    this.f2aEnabled = false,
-    this.f2aFactors = const <F2AFactor>[],
+    this.twoFactorEnabled = false,
+    this.twoFactorEntries = const <TwoFactorEntry>[],
   });
 
   final double fontScale;
@@ -129,8 +129,8 @@ class DisplaySettings {
   final bool exitPasswordEnabled;
   final String exitPassword;
   final bool safeMode;
-  final bool f2aEnabled;
-  final List<F2AFactor> f2aFactors;
+  final bool twoFactorEnabled;
+  final List<TwoFactorEntry> twoFactorEntries;
 
   DisplaySettings copyWith({
     double? fontScale,
@@ -142,7 +142,7 @@ class DisplaySettings {
     String? exitPassword,
     bool? safeMode,
     bool? f2aEnabled,
-    List<F2AFactor>? f2aFactors,
+    List<TwoFactorEntry>? f2aFactors,
   }) {
     return DisplaySettings(
       fontScale: fontScale ?? this.fontScale,
@@ -153,8 +153,8 @@ class DisplaySettings {
       exitPasswordEnabled: exitPasswordEnabled ?? this.exitPasswordEnabled,
       exitPassword: exitPassword ?? this.exitPassword,
       safeMode: safeMode ?? this.safeMode,
-      f2aEnabled: f2aEnabled ?? this.f2aEnabled,
-      f2aFactors: f2aFactors ?? this.f2aFactors,
+      twoFactorEnabled: f2aEnabled ?? twoFactorEnabled,
+      twoFactorEntries: f2aFactors ?? twoFactorEntries,
     );
   }
 
@@ -168,8 +168,8 @@ class DisplaySettings {
       'exitPasswordEnabled': exitPasswordEnabled,
       'exitPassword': exitPassword,
       'safeMode': safeMode,
-      'f2aEnabled': f2aEnabled,
-      'f2aFactors': f2aFactors.map((e) => e.toJson()).toList(),
+      'f2aEnabled': twoFactorEnabled,
+      'f2aFactors': twoFactorEntries.map((e) => e.toJson()).toList(),
     };
   }
 
@@ -190,17 +190,17 @@ class DisplaySettings {
       exitPasswordEnabled: (json['exitPasswordEnabled'] as bool?) ?? false,
       exitPassword: (json['exitPassword'] as String?) ?? '',
       safeMode: (json['safeMode'] as bool?) ?? false,
-      f2aEnabled: (json['f2aEnabled'] as bool?) ?? false,
-      f2aFactors: factorsRaw
+      twoFactorEnabled: (json['f2aEnabled'] as bool?) ?? false,
+      twoFactorEntries: factorsRaw
           .whereType<Map>()
-          .map((item) => F2AFactor.fromJson(Map<String, dynamic>.from(item)))
+          .map((item) => TwoFactorEntry.fromJson(Map<String, dynamic>.from(item)))
           .toList(),
     );
   }
 }
 
-class F2AFactor {
-  const F2AFactor({
+class TwoFactorEntry {
+  const TwoFactorEntry({
     required this.id,
     required this.name,
     required this.secret,
@@ -212,13 +212,13 @@ class F2AFactor {
   final String secret;
   final int createdAtMs;
 
-  F2AFactor copyWith({
+  TwoFactorEntry copyWith({
     String? id,
     String? name,
     String? secret,
     int? createdAtMs,
   }) {
-    return F2AFactor(
+    return TwoFactorEntry(
       id: id ?? this.id,
       name: name ?? this.name,
       secret: secret ?? this.secret,
@@ -235,8 +235,8 @@ class F2AFactor {
     };
   }
 
-  static F2AFactor fromJson(Map<String, dynamic> json) {
-    return F2AFactor(
+  static TwoFactorEntry fromJson(Map<String, dynamic> json) {
+    return TwoFactorEntry(
       id: (json['id'] as String?)?.trim().isNotEmpty == true
           ? (json['id'] as String).trim()
           : DateTime.now().millisecondsSinceEpoch.toString(),

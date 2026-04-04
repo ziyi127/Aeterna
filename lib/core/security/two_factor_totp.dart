@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:aeterna/core/config/config_manager.dart';
 import 'package:crypto/crypto.dart';
 
-class F2ATotp {
+class TwoFactorTotp {
   static const String _base32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
   static String generateSecret({int length = 32}) {
@@ -27,7 +27,7 @@ class F2ATotp {
 
   static bool verifyCode({
     required String code,
-    required List<F2AFactor> factors,
+    required List<TwoFactorEntry> factors,
     DateTime? at,
     int digits = 6,
     int periodSeconds = 30,

@@ -1,4 +1,4 @@
-name: Deploy F2A Pages
+name: Deploy 2FA Pages
 
 on:
   push:

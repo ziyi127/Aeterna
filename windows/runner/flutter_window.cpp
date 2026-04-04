@@ -208,11 +208,13 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+#ifdef WM_TABLET_QUERYSYSTEMGESTURESTATUS
     case WM_TABLET_QUERYSYSTEMGESTURESTATUS:
       if (presentation_input_lock_enabled_) {
         return static_cast<LRESULT>(kPresentationTabletGestureMask);
       }
       break;
+#endif
     case WM_TOUCH:
     case WM_GESTURE:
     case WM_GESTURENOTIFY:

@@ -530,7 +530,7 @@
           <details class="menu">
             <summary>工具</summary>
             <div class="menu-panel">
-              <a href="./tools/f2a/index.html">F2A 验证器 <span>→</span></a>
+              <a href="./tools/2fa/index.html">2FA 验证器 <span>→</span></a>
             </div>
           </details>
         </nav>
@@ -550,7 +550,7 @@
           <div class="eyebrow"><span class="eyebrow-dot"></span>考试现场时间中枢</div>
           <h1>面向考试现场的看板、同步与退出保护。</h1>
           <p class="hero-copy">
-            Aeterna 提供考试编排、倒计时展示、应用内时间偏移校正、退出保护和 F2A 验证。
+            Aeterna 提供考试编排、倒计时展示、应用内时间偏移校正、退出保护和 2FA 验证。
           </p>
           <div class="cta-row">
             <a class="btn primary" href="https://github.com/ziyi127/Aeterna/releases" target="_blank" rel="noreferrer">下载最新版本</a>
@@ -566,7 +566,7 @@
               <span>多服务器、自动同步、手动毫秒校正</span>
             </div>
             <div class="metric">
-              <strong>F2A 保护</strong>
+              <strong>2FA 保护</strong>
               <span>网页绑定 + 动态码验证，防误退出</span>
             </div>
           </div>
@@ -588,7 +588,7 @@
             </article>
             <article class="step-card">
               <div class="step-index">3</div>
-              <h3>绑定 F2A</h3>
+              <h3>绑定 2FA</h3>
               <p>通过网页子入口或第三方验证器绑定，用于退出验证。</p>
             </article>
           </div>
@@ -596,7 +596,7 @@
             <span class="pill">不修改系统时间</span>
             <span class="pill">多 NTP 服务器</span>
             <span class="pill">自动同步</span>
-            <span class="pill">网页 F2A</span>
+            <span class="pill">网页 2FA</span>
           </div>
         </aside>
       </div>
@@ -619,7 +619,7 @@
           </article>
           <article class="feature-card">
             <h3>退出保护</h3>
-            <p>本地密码与 F2A 互斥保存，退出时按当前启用方式验证。</p>
+            <p>本地密码与 2FA 互斥保存，退出时按当前启用方式验证。</p>
           </article>
           <article class="feature-card">
             <h3>发布与入口</h3>
@@ -683,15 +683,15 @@
 
     <footer class="container">
       <div>© 2026 Aeterna · 官方站点</div>
-      <div style="margin-top: 6px">本站仅展示已发布版本、已实现功能和项目入口；F2A 工具会在浏览器内本地计算动态码并保存密钥。</div>
+      <div style="margin-top: 6px">本站仅展示已发布版本、已实现功能和项目入口；2FA 工具会在浏览器内本地计算动态码并保存密钥。</div>
     </footer>
 
     <script>
-      // Desktop app may open the site with ?entry=f2a&secret=...; redirect into validator sub-entry.
+      // Desktop app may open the site with ?entry=2fa&secret=...; redirect into validator sub-entry.
       const url = new URL(window.location.href);
       const entry = (url.searchParams.get('entry') || '').trim().toLowerCase();
-      if (entry === 'f2a') {
-        const target = new URL('./tools/f2a/index.html', window.location.href);
+      if (entry === '2fa') {
+        const target = new URL('./tools/2fa/index.html', window.location.href);
         for (const [k, v] of url.searchParams.entries()) {
           if (k !== 'entry') {
             target.searchParams.set(k, v);

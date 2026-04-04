@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aeterna F2A 验证器</title>
+    <title>Aeterna 2FA 验证器</title>
     <style>
       :root {
         --bg: #f3f7f3;
@@ -490,7 +490,7 @@
           <div class="brand">
             <strong>Aeterna</strong>
           </div>
-          <span style="color: var(--muted)">F2A 工具</span>
+          <span style="color: var(--muted)">2FA 工具</span>
         </div>
         <nav>
           <a href="../../">官网首页</a>
@@ -507,14 +507,14 @@
           <div class="hero-brand">
             <div class="logo-mark" aria-hidden="true"></div>
             <div class="hero-brand-text">
-              <strong>Aeterna F2A</strong>
+              <strong>Aeterna 2FA</strong>
               <span>浏览器内保存密钥并生成验证码</span>
             </div>
           </div>
           <div class="eyebrow"><span class="eyebrow-dot"></span>浏览器内本地验证</div>
           <h1>扫码绑定密钥，<br />在浏览器内生成验证码。</h1>
           <p class="hero-copy">
-            这是 Aeterna 官网的 F2A 子入口。扫码后密钥保存在当前浏览器 Cookie 中，可用于桌面端退出保护，并兼容第三方标准 TOTP 验证器。
+            这是 Aeterna 官网的 2FA 子入口。扫码后密钥保存在当前浏览器 Cookie 中，可用于桌面端退出保护，并兼容第三方标准 TOTP 验证器。
           </p>
           <div class="cta-row">
             <a class="btn primary" href="#bind">开始使用</a>
@@ -625,7 +625,8 @@
     </dialog>
 
     <script>
-      const COOKIE_KEY = 'aeterna_f2a_keys';
+      const COOKIE_KEY = 'aeterna_2fa_keys';
+      const LEGACY_COOKIE_KEY = 'aeterna_f2a_keys';
       const NAME_DIALOG = document.getElementById('name-dialog');
       const NAME_INPUT = document.getElementById('name-input');
       const INCOMING_CARD = document.getElementById('incoming-card');
@@ -661,7 +662,7 @@
 
       function loadFactors() {
         try {
-          const raw = getCookie(COOKIE_KEY);
+          const raw = getCookie(COOKIE_KEY) || getCookie(LEGACY_COOKIE_KEY);
           if (!raw) return [];
           const parsed = JSON.parse(raw);
           if (!Array.isArray(parsed)) return [];
@@ -798,7 +799,7 @@
         LIST_EL.innerHTML = '';
         if (!factors.length) {
           const empty = document.createElement('p');
-          empty.textContent = '当前没有保存的 F2A 密钥，请先从电脑端扫码绑定。';
+          empty.textContent = '当前没有保存的 2FA 密钥，请先从电脑端扫码绑定。';
           LIST_EL.appendChild(empty);
           return;
         }
@@ -829,7 +830,7 @@
         LIST_EL.querySelectorAll('[data-remove]').forEach((btn) => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-remove');
-            const confirmed = window.confirm('删除后无法恢复，确定要删除该密钥吗？');
+            const confirmed = window.confirm('删除后无法恢复，确定要删除该 2FA 密钥吗？');
             if (!confirmed) {
               return;
             }
@@ -850,7 +851,7 @@
       }
 
       CLEAR_BTN.addEventListener('click', () => {
-        const confirmed = window.confirm('清空后无法恢复，确定要删除所有密钥吗？');
+        const confirmed = window.confirm('清空后无法恢复，确定要删除所有 2FA 密钥吗？');
         if (!confirmed) {
           return;
         }

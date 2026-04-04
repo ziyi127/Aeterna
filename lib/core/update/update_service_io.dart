@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aeterna/core/update/update_models.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 class UpdateService {
   static const String _owner = 'ziyi127';
   static const String _repo = 'Aeterna';
+  static const String _latestReleasePageUrl =
+      'https://github.com/$_owner/$_repo/releases/latest';
   static const String _updateRootName = 'AeternaUpdate';
   static const List<String> _preferredWindowsSquirrelFeedAssetNames = <String>[
     'aeterna-windows-squirrel-feed.tar.zst',
@@ -96,6 +99,15 @@ class UpdateService {
         message: '已下载 v${release.version} 的 Squirrel 更新负载，确认后将自动退出并启动更新。',
       );
     } catch (error) {
+      if (error is _GitHubApiException && error.statusCode == 403) {
+        final fallbackOutcome = await _tryDirectLatestDownloadFallback(
+          currentVersion: currentVersion,
+        );
+        if (fallbackOutcome != null) {
+          return fallbackOutcome;
+        }
+      }
+
       final cachedPackage = Platform.isWindows
           ? await _loadAnyPendingPackage()
           : null;
@@ -111,9 +123,101 @@ class UpdateService {
       return UpdateCheckOutcome(
         platformSupported: Platform.isWindows,
         currentVersion: currentVersion,
-        message: '检查更新失败: $error',
+        message: _buildCheckFailureMessage(error),
       );
     }
+  }
+
+  static Future<UpdateCheckOutcome?> _tryDirectLatestDownloadFallback({
+    required String currentVersion,
+  }) async {
+    if (!Platform.isWindows) {
+      return null;
+    }
+
+    for (final assetName in _preferredWindowsSquirrelFeedAssetNames) {
+      final directUrl =
+          'https://github.com/$_owner/$_repo/releases/latest/download/$assetName';
+
+      final downloadDir = _rootDirectory;
+      await downloadDir.create(recursive: true);
+      final packagePath =
+          '${downloadDir.path}${Platform.pathSeparator}$assetName';
+
+      final client = HttpClient();
+      client.userAgent = 'AeternaUpdater/2.0';
+
+      try {
+        final request = await client.getUrl(Uri.parse(directUrl));
+        request.headers.add(
+          HttpHeaders.acceptHeader,
+          'application/octet-stream',
+        );
+        final response = await request.close().timeout(_networkTimeout);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          continue;
+        }
+
+        final releaseInfo = _extractReleaseInfoFromRedirects(response.redirects);
+        if (releaseInfo != null &&
+            !isNewerAppVersion(releaseInfo.version, currentVersion)) {
+          await response.drain<void>();
+          return UpdateCheckOutcome(
+            platformSupported: true,
+            currentVersion: currentVersion,
+            latestVersion: releaseInfo.version,
+            message: '当前已经是最新版本 v$currentVersion。',
+          );
+        }
+
+        final file = File(packagePath);
+        final sink = file.openWrite();
+        await response.pipe(sink).timeout(_payloadDownloadTimeout);
+        await sink.flush();
+        await sink.close();
+
+        final downloadedBytes = await file.length();
+        if (downloadedBytes <= 0) {
+          continue;
+        }
+        final payloadSha256 = await _computeFileSha256Hex(file);
+
+        final package = DownloadedUpdatePackage(
+          packageType: UpdatePackageType.squirrelFeed,
+          version: releaseInfo?.version ?? currentVersion,
+          assetName: assetName,
+          packagePath: packagePath,
+          downloadUrl: directUrl,
+          releaseUrl: releaseInfo?.releaseUrl ?? _latestReleasePageUrl,
+          payloadSize: downloadedBytes,
+          payloadSha256: payloadSha256,
+        );
+        await _writeKeyValueFile(_manifestFile, package.toKeyValueLines());
+
+        return UpdateCheckOutcome(
+          platformSupported: true,
+          currentVersion: currentVersion,
+          latestVersion: releaseInfo?.version,
+          downloadedPackage: package,
+          message: releaseInfo == null
+              ? 'GitHub API 当前不可用，已通过直链下载更新负载，可直接安装。'
+              : 'GitHub API 当前不可用，已通过直链下载 v${releaseInfo.version} 更新负载，可直接安装。',
+        );
+      } catch (_) {
+        continue;
+      } finally {
+        client.close(force: true);
+      }
+    }
+
+    return null;
+  }
+
+  static String _buildCheckFailureMessage(Object error) {
+    if (error is _GitHubApiException && error.statusCode == 403) {
+      return error.userMessage;
+    }
+    return '检查更新失败: $error';
   }
 
   static Future<bool> launchInstaller(DownloadedUpdatePackage package) async {
@@ -133,6 +237,19 @@ class UpdateService {
       if (await File(package.packagePath).length() <= 0) {
         debugPrint('launchInstaller rejected: payload file is empty');
         return false;
+      }
+      final payloadFile = File(package.packagePath);
+      final payloadBytes = await payloadFile.length();
+      if (package.payloadSize > 0 && payloadBytes != package.payloadSize) {
+        debugPrint('launchInstaller rejected: payload size mismatch');
+        return false;
+      }
+      if (package.payloadSha256.isNotEmpty) {
+        final actualHash = await _computeFileSha256Hex(payloadFile);
+        if (actualHash != package.payloadSha256) {
+          debugPrint('launchInstaller rejected: payload hash mismatch');
+          return false;
+        }
       }
 
       await _rootDirectory.create(recursive: true);
@@ -220,6 +337,7 @@ class UpdateService {
         '下载文件大小不匹配，expected=${selectedAsset.asset.size}, actual=$downloadedBytes',
       );
     }
+    final payloadSha256 = await _computeFileSha256Hex(file);
 
     final package = DownloadedUpdatePackage(
       packageType: selectedAsset.packageType,
@@ -228,6 +346,8 @@ class UpdateService {
       packagePath: packagePath,
       downloadUrl: selectedAsset.asset.downloadUrl,
       releaseUrl: release.releaseUrl,
+      payloadSize: downloadedBytes,
+      payloadSha256: payloadSha256,
     );
     await _writeKeyValueFile(_manifestFile, package.toKeyValueLines());
     return package;
@@ -245,7 +365,20 @@ class UpdateService {
     );
     final response = await request.close().timeout(_networkTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('GitHub API returned ${response.statusCode}');
+      final body = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(_networkTimeout);
+      throw _GitHubApiException(
+        statusCode: response.statusCode,
+        body: body,
+        rateLimitRemaining: int.tryParse(
+          response.headers.value('x-ratelimit-remaining') ?? '',
+        ),
+        rateLimitResetEpochSeconds: int.tryParse(
+          response.headers.value('x-ratelimit-reset') ?? '',
+        ),
+      );
     }
     final body = await response
         .transform(utf8.decoder)
@@ -298,6 +431,28 @@ class UpdateService {
       );
     }
 
+    return null;
+  }
+
+  static _ResolvedReleaseInfo? _extractReleaseInfoFromRedirects(
+    List<RedirectInfo> redirects,
+  ) {
+    for (final redirect in redirects) {
+      final text = redirect.location.toString();
+      final match = RegExp(r'/releases/download/([^/]+)/').firstMatch(text);
+      if (match == null) {
+        continue;
+      }
+      final tag = match.group(1) ?? '';
+      if (tag.isEmpty) {
+        continue;
+      }
+      final normalizedVersion = tag.replaceFirst(RegExp(r'^[vV]'), '');
+      return _ResolvedReleaseInfo(
+        version: normalizedVersion,
+        releaseUrl: 'https://github.com/$_owner/$_repo/releases/tag/$tag',
+      );
+    }
     return null;
   }
 
@@ -372,10 +527,29 @@ class UpdateService {
           !_isSquirrelFeedPath(package.packagePath)) {
         return null;
       }
+      final payloadFile = File(package.packagePath);
+      final payloadBytes = await payloadFile.length();
+      if (payloadBytes <= 0) {
+        return null;
+      }
+      if (package.payloadSize > 0 && payloadBytes != package.payloadSize) {
+        return null;
+      }
+      if (package.payloadSha256.isNotEmpty) {
+        final actualHash = await _computeFileSha256Hex(payloadFile);
+        if (actualHash != package.payloadSha256) {
+          return null;
+        }
+      }
       return package;
     } catch (_) {
       return null;
     }
+  }
+
+  static Future<String> _computeFileSha256Hex(File file) async {
+    final digest = await sha256.bind(file.openRead()).first;
+    return digest.toString().toLowerCase();
   }
 
   static bool _isSquirrelFeedPath(String value) {
@@ -436,6 +610,50 @@ class _SelectedAsset {
 
   final UpdatePackageType packageType;
   final _GitHubReleaseAsset asset;
+}
+
+class _ResolvedReleaseInfo {
+  const _ResolvedReleaseInfo({required this.version, required this.releaseUrl});
+
+  final String version;
+  final String releaseUrl;
+}
+
+class _GitHubApiException implements Exception {
+  const _GitHubApiException({
+    required this.statusCode,
+    required this.body,
+    required this.rateLimitRemaining,
+    required this.rateLimitResetEpochSeconds,
+  });
+
+  final int statusCode;
+  final String body;
+  final int? rateLimitRemaining;
+  final int? rateLimitResetEpochSeconds;
+
+  String get userMessage {
+    if (statusCode == 403) {
+      final reset = rateLimitResetEpochSeconds;
+      if (rateLimitRemaining == 0 && reset != null) {
+        final resetAt = DateTime.fromMillisecondsSinceEpoch(
+          reset * 1000,
+          isUtc: true,
+        ).toLocal();
+        return '检查更新失败: GitHub API 触发访问限制（403），请在 ${resetAt.hour.toString().padLeft(2, '0')}:${resetAt.minute.toString().padLeft(2, '0')} 后重试，或直接打开更新页面手动下载。';
+      }
+      return '检查更新失败: GitHub API 返回 403（可能为访问限制），请稍后重试或直接打开更新页面。';
+    }
+    return '检查更新失败: GitHub API returned $statusCode';
+  }
+
+  @override
+  String toString() {
+    if (body.trim().isEmpty) {
+      return 'GitHub API returned $statusCode';
+    }
+    return 'GitHub API returned $statusCode: $body';
+  }
 }
 
 class _Version implements Comparable<_Version> {

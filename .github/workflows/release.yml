@@ -248,6 +248,13 @@ jobs:
           if (-not (Test-Path (Join-Path $releasesDir 'Setup.exe'))) {
             throw 'Squirrel releasify did not generate Setup.exe.'
           }
+          if (-not (Test-Path (Join-Path $releasesDir 'RELEASES'))) {
+            throw 'Squirrel releasify did not generate RELEASES metadata.'
+          }
+          $fullPackages = Get-ChildItem -Path $releasesDir -Filter '*-full.nupkg' -ErrorAction SilentlyContinue
+          if (-not $fullPackages -or $fullPackages.Count -eq 0) {
+            throw 'Squirrel releasify did not generate any full package (*.nupkg).'
+          }
 
           Remove-Item -Recurse -Force $packagesDir -ErrorAction SilentlyContinue
           Remove-Item -Force $nupkgOutput -ErrorAction SilentlyContinue
@@ -310,6 +317,21 @@ jobs:
             fi
             zip -r -9 "${dir}.zip" "$dir"
           done
+
+      - name: Export standalone Windows installer
+        run: |
+          if [[ -f artifacts/aeterna-windows-squirrel-feed/Setup.exe ]]; then
+            cp artifacts/aeterna-windows-squirrel-feed/Setup.exe artifacts/aeterna-setup.exe
+          fi
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd artifacts
+          shopt -s nullglob
+          files=(*.zip *.tar.zst *.exe)
+          if (( ${#files[@]} > 0 )); then
+            sha256sum "${files[@]}" > SHA256SUMS.txt
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2.6.1

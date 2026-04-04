@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -199,6 +200,19 @@ bool ParseUnsignedLong(const std::string& text, DWORD* value) {
   try {
     const unsigned long parsed = std::stoul(text);
     *value = static_cast<DWORD>(parsed);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool ParseUnsignedLongLong(const std::string& text, uint64_t* value) {
+  if (value == nullptr || text.empty()) {
+    return false;
+  }
+  try {
+    const unsigned long long parsed = std::stoull(text);
+    *value = static_cast<uint64_t>(parsed);
     return true;
   } catch (...) {
     return false;
@@ -450,6 +464,7 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
 
   const std::string package_type_raw = read_value("packageType");
   const std::string schema_version_raw = read_value("schemaVersion");
+  const std::string payload_size_raw = read_value("payloadSize");
   std::string package_path_raw = read_value("packagePath");
   if (package_path_raw.empty()) {
     package_path_raw = read_value("squirrelFeedPath");
@@ -501,6 +516,31 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
           L"Aeterna 更新失败",
           MB_ICONERROR | MB_OK);
       return false;
+    }
+
+    std::error_code size_error;
+    const uint64_t actual_size = std::filesystem::file_size(payload_path, size_error);
+    if (size_error || actual_size == 0) {
+      remove_manifest();
+      ::MessageBoxW(
+          nullptr,
+          L"更新负载文件损坏或为空，已拒绝安装。",
+          L"Aeterna 更新失败",
+          MB_ICONERROR | MB_OK);
+      return false;
+    }
+    if (!payload_size_raw.empty()) {
+      uint64_t expected_size = 0;
+      if (!ParseUnsignedLongLong(payload_size_raw, &expected_size) ||
+          expected_size == 0 || expected_size != actual_size) {
+        remove_manifest();
+        ::MessageBoxW(
+            nullptr,
+            L"更新负载大小校验失败，已拒绝安装。",
+            L"Aeterna 更新失败",
+            MB_ICONERROR | MB_OK);
+        return false;
+      }
     }
 
     const path feed_root = GetUpdateRootPath() / L"squirrel_feed";

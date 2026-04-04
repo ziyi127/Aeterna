@@ -44,6 +44,8 @@ class DownloadedUpdatePackage {
     required this.packagePath,
     required this.downloadUrl,
     required this.releaseUrl,
+    required this.payloadSize,
+    required this.payloadSha256,
   });
 
   final UpdatePackageType packageType;
@@ -52,6 +54,8 @@ class DownloadedUpdatePackage {
   final String packagePath;
   final String downloadUrl;
   final String releaseUrl;
+  final int payloadSize;
+  final String payloadSha256;
 
   bool get isSquirrelFeed => packageType == UpdatePackageType.squirrelFeed;
 
@@ -65,6 +69,8 @@ class DownloadedUpdatePackage {
       'downloadUrl': downloadUrl,
       'releaseUrl': releaseUrl,
       'squirrelFeedPath': packagePath,
+      'payloadSize': payloadSize.toString(),
+      'payloadSha256': payloadSha256,
     };
     return values;
   }
@@ -84,6 +90,8 @@ class DownloadedUpdatePackage {
       packagePath: packagePath,
       downloadUrl: values['downloadUrl'] ?? '',
       releaseUrl: values['releaseUrl'] ?? '',
+      payloadSize: int.tryParse(values['payloadSize'] ?? '') ?? 0,
+      payloadSha256: (values['payloadSha256'] ?? '').trim().toLowerCase(),
     );
   }
 }

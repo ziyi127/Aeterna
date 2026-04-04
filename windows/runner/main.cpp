@@ -277,12 +277,16 @@ bool RunProcessAndWait(
   if (!started) {
     return false;
   }
-  ::WaitForSingleObject(process_info.hProcess, INFINITE);
+  const DWORD wait_result = ::WaitForSingleObject(process_info.hProcess, 5 * 60 * 1000);
   DWORD exit_code = 1;
-  ::GetExitCodeProcess(process_info.hProcess, &exit_code);
+  if (wait_result == WAIT_OBJECT_0) {
+    ::GetExitCodeProcess(process_info.hProcess, &exit_code);
+  } else if (wait_result == WAIT_TIMEOUT) {
+    ::TerminateProcess(process_info.hProcess, 1);
+  }
   ::CloseHandle(process_info.hProcess);
   ::CloseHandle(process_info.hThread);
-  return exit_code == 0;
+  return wait_result == WAIT_OBJECT_0 && exit_code == 0;
 }
 
 bool CleanDirectory(const path& directory_path) {
@@ -331,15 +335,14 @@ bool WriteSuccessMarker(const std::wstring& version) {
   return WriteKeyValueFile(GetSuccessPath(), values);
 }
 
-bool LaunchSquirrelFromFeed(const path& feed_root, const std::wstring& app_name) {
+bool LaunchSquirrelFromFeed(const path& feed_root) {
   const path setup_exe = feed_root / L"Setup.exe";
   if (std::filesystem::exists(setup_exe)) {
     SHELLEXECUTEINFOW execute_info{};
     execute_info.cbSize = sizeof(execute_info);
     execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    execute_info.lpVerb = L"runas";
+    execute_info.lpVerb = L"open";
     execute_info.lpFile = setup_exe.c_str();
-    execute_info.lpParameters = L"/SP- /CLOSEAPPLICATIONS /NORESTART";
     execute_info.lpDirectory = setup_exe.parent_path().c_str();
     execute_info.nShow = SW_SHOWNORMAL;
 
@@ -353,18 +356,7 @@ bool LaunchSquirrelFromFeed(const path& feed_root, const std::wstring& app_name)
     return true;
   }
 
-  const path update_exe = feed_root / L"Update.exe";
-  if (!std::filesystem::exists(update_exe)) {
-    return false;
-  }
-
-  const std::wstring command_line =
-      L"\"" + update_exe.wstring() + L"\" --update \"" +
-      feed_root.wstring() + L"\" --processStart \"" + app_name + L"\"";
-  return LaunchDetachedProcess(
-      update_exe.wstring(),
-      command_line,
-      feed_root.wstring());
+  return false;
 }
 
 bool IsTarZstPayload(const path& payload_path) {
@@ -457,6 +449,7 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
   };
 
   const std::string package_type_raw = read_value("packageType");
+  const std::string schema_version_raw = read_value("schemaVersion");
   std::string package_path_raw = read_value("packagePath");
   if (package_path_raw.empty()) {
     package_path_raw = read_value("squirrelFeedPath");
@@ -464,17 +457,22 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
 
   const std::wstring version = Utf16FromUtf8(read_value("version").c_str());
   const std::wstring package_path = Utf16FromUtf8(package_path_raw.c_str());
-  const std::string executable_name_raw = read_value("appExecutableName");
-  const std::wstring app_executable_name =
-      executable_name_raw.empty()
-          ? L"aeterna.exe"
-          : Utf16FromUtf8(executable_name_raw.c_str());
 
   if (version.empty() || package_path.empty()) {
     remove_manifest();
     ::MessageBoxW(
         nullptr,
         L"更新清单内容不完整，无法继续安装。",
+        L"Aeterna 更新失败",
+        MB_ICONERROR | MB_OK);
+    return false;
+  }
+
+  if (schema_version_raw != "2") {
+    remove_manifest();
+    ::MessageBoxW(
+        nullptr,
+        L"更新清单版本不受支持，已拒绝执行。",
         L"Aeterna 更新失败",
         MB_ICONERROR | MB_OK);
     return false;
@@ -516,7 +514,7 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
       return false;
     }
 
-    if (!LaunchSquirrelFromFeed(feed_root, app_executable_name)) {
+    if (!LaunchSquirrelFromFeed(feed_root)) {
       remove_manifest();
       ::MessageBoxW(
           nullptr,

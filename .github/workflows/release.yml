@@ -56,8 +56,8 @@ jobs:
             os: windows-latest
             optional: false
             build_command: flutter build windows --release --tree-shake-icons --obfuscate --split-debug-info=build/symbols/windows
-            artifact_path: build/windows/x64/runner/Release
-            artifact_name: aeterna-windows-x64
+            artifact_path: build/windows/squirrel/Releases
+            artifact_name: aeterna-windows-squirrel-feed
           - target: windows-arm64
             os: windows-latest
             optional: true
@@ -203,6 +203,48 @@ jobs:
               Remove-Item -Force -ErrorAction SilentlyContinue
           }
 
+      - name: Package Windows with Squirrel
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = Resolve-Path 'build/windows/x64/runner/Release'
+          $packageRoot = 'build/windows/squirrel'
+          $packagesDir = Join-Path $packageRoot 'packages'
+          $releasesDir = Join-Path $packageRoot 'Releases'
+          New-Item -ItemType Directory -Force -Path $packagesDir, $releasesDir | Out-Null
+
+          $versionLine = Get-Content 'pubspec.yaml' | Where-Object { $_ -match '^version:\s*' } | Select-Object -First 1
+          if (-not $versionLine) {
+            throw 'Unable to determine application version from pubspec.yaml.'
+          }
+          $version = ($versionLine -replace '^version:\s*', '').Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+') {
+            throw "Unsupported version format: $version"
+          }
+          $nugetVersion = $version.Split('+')[0]
+
+          nuget install Squirrel.Windows -Version 2.0.1 -OutputDirectory $packageRoot | Out-Null
+          $squirrelExe = Get-ChildItem -Path $packageRoot -Recurse -Filter squirrel.exe | Select-Object -First 1
+          if (-not $squirrelExe) {
+            throw 'Unable to locate squirrel.exe after installing Squirrel.Windows.'
+          }
+
+          $nuspec = 'tools/windows/aeterna-squirrel.nuspec'
+          $nupkgOutput = Join-Path $packagesDir "Aeterna.$nugetVersion.nupkg"
+          nuget pack $nuspec -Version $nugetVersion -BasePath $releaseDir -OutputDirectory $packagesDir | Out-Null
+          if (-not (Test-Path $nupkgOutput)) {
+            throw "NuGet package was not created: $nupkgOutput"
+          }
+
+          & $squirrelExe.FullName --releasify $nupkgOutput --releaseDir $releasesDir | Out-Null
+          if (-not (Test-Path (Join-Path $releasesDir 'Setup.exe'))) {
+            throw 'Squirrel releasify did not generate Setup.exe.'
+          }
+
+          Remove-Item -Recurse -Force $packagesDir -ErrorAction SilentlyContinue
+          Remove-Item -Force $nupkgOutput -ErrorAction SilentlyContinue
+
       - name: Upload artifact
         if: matrix.optional != true
         uses: actions/upload-artifact@v6
@@ -255,12 +297,12 @@ jobs:
               echo "Skip report artifact: $dir"
               continue
             fi
+            if [[ "$dir" == "aeterna-windows-squirrel-feed" ]]; then
+              tar --zstd -cf "${dir}.tar.zst" -C "$dir" .
+              continue
+            fi
             zip -r -9 "${dir}.zip" "$dir"
           done
-
-      - name: Archive Windows Squirrel feed package
-        run: |
-          tar --zstd -cf artifacts/aeterna-windows-squirrel-feed.tar.zst -C artifacts/aeterna-windows-x64 .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2.6.1

@@ -130,6 +130,10 @@ class UpdateService {
         debugPrint('launchInstaller rejected: payload file missing');
         return false;
       }
+      if (await File(package.packagePath).length() <= 0) {
+        debugPrint('launchInstaller rejected: payload file is empty');
+        return false;
+      }
 
       await _rootDirectory.create(recursive: true);
       await _writeKeyValueFile(_manifestFile, package.toKeyValueLines());
@@ -147,6 +151,9 @@ class UpdateService {
       unawaited(process.exitCode);
       return true;
     } catch (error) {
+      if (await _manifestFile.exists()) {
+        await _manifestFile.delete();
+      }
       debugPrint('launchInstaller failed: $error');
       return false;
     }
@@ -204,13 +211,14 @@ class UpdateService {
     await sink.flush();
     await sink.close();
 
-    if (selectedAsset.asset.size > 0) {
-      final downloadedBytes = await file.length();
-      if (downloadedBytes != selectedAsset.asset.size) {
-        throw StateError(
-          '下载文件大小不匹配，expected=${selectedAsset.asset.size}, actual=$downloadedBytes',
-        );
-      }
+    final downloadedBytes = await file.length();
+    if (downloadedBytes <= 0) {
+      throw StateError('下载文件为空: ${selectedAsset.asset.name}');
+    }
+    if (selectedAsset.asset.size > 0 && downloadedBytes != selectedAsset.asset.size) {
+      throw StateError(
+        '下载文件大小不匹配，expected=${selectedAsset.asset.size}, actual=$downloadedBytes',
+      );
     }
 
     final package = DownloadedUpdatePackage(
@@ -352,6 +360,9 @@ class UpdateService {
     try {
       final lines = await _manifestFile.readAsLines();
       final values = _parseKeyValueLines(lines);
+      if (values['schemaVersion'] != '2') {
+        return null;
+      }
       final package = DownloadedUpdatePackage.fromKeyValueLines(values);
       if (package.packagePath.isEmpty ||
           !File(package.packagePath).existsSync()) {

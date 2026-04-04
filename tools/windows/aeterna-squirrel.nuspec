@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>Aeterna</id>
+    <version>0.0.0.0</version>
+    <title>Aeterna</title>
+    <authors>ziyi127</authors>
+    <owners>ziyi127</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Aeterna Windows desktop application package for Squirrel.Windows release generation.</description>
+    <copyright>Copyright 2026</copyright>
+    <dependencies />
+  </metadata>
+  <files>
+    <file src="**\*.*" target="lib\net45\" exclude="**\*.pdb;**\*.nupkg;**\*.zip;**\*.tar.zst;**\*.log;**\*.tmp" />
+  </files>
+</package>

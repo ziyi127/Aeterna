@@ -219,10 +219,17 @@ jobs:
             throw 'Unable to determine application version from pubspec.yaml.'
           }
           $version = ($versionLine -replace '^version:\s*', '').Trim()
-          if ($version -notmatch '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-[^+]+)?(?:\+(?<build>\d+))?$') {
+          if ($version -notmatch '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<pre>[^+]+))?(?:\+(?<build>\d+))?$') {
             throw "Unsupported version format: $version"
           }
-          $nugetVersion = '{0}.{1}.{2}.{3}' -f $Matches.major, $Matches.minor, $Matches.patch, ($(if ($Matches.build) { $Matches.build } else { '0' }))
+          $nugetVersion = '{0}.{1}.{2}' -f $Matches.major, $Matches.minor, $Matches.patch
+          if ($Matches.pre) {
+            $pre = ($Matches.pre -replace '[^0-9A-Za-z-]', '')
+            if (-not $pre) {
+              throw "Unsupported prerelease label in version: $version"
+            }
+            $nugetVersion = "$nugetVersion-$pre"
+          }
 
           nuget install Squirrel.Windows -Version 2.0.1 -OutputDirectory $packageRoot | Out-Null
           $squirrelExe = Get-ChildItem -Path $packageRoot -Recurse -Filter squirrel.exe | Select-Object -First 1

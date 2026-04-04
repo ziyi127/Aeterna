@@ -1,6 +1,12 @@
 import 'package:aeterna/core/time/time_source_mode.dart';
 import 'package:ntp/ntp.dart';
 
+typedef NtpNowFetcher =
+    Future<DateTime> Function({
+      required String lookUpAddress,
+      required Duration timeout,
+    });
+
 class NtpSyncResult {
   const NtpSyncResult({required this.networkTime, required this.server});
 
@@ -9,6 +15,18 @@ class NtpSyncResult {
 }
 
 class NtpService {
+  NtpService({NtpNowFetcher? nowFetcher})
+    : _nowFetcher = nowFetcher ?? _defaultNowFetcher;
+
+  final NtpNowFetcher _nowFetcher;
+
+  static Future<DateTime> _defaultNowFetcher({
+    required String lookUpAddress,
+    required Duration timeout,
+  }) {
+    return NTP.now(lookUpAddress: lookUpAddress, timeout: timeout);
+  }
+
   Future<NtpSyncResult> fetchNetworkTime({
     required TimeSourceMode mode,
     required List<String> addresses,
@@ -21,7 +39,7 @@ class NtpService {
         final hosts = _resolveHosts(mode, addresses);
         for (final host in hosts) {
           try {
-            final networkTime = await NTP.now(
+            final networkTime = await _nowFetcher(
               lookUpAddress: host,
               timeout: const Duration(milliseconds: 1200),
             );

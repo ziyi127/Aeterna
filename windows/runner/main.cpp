@@ -342,6 +342,51 @@ bool LaunchAppBinary(const path& executable_path) {
   return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
+bool LaunchInstallerBinary(const path& installer_path) {
+  if (installer_path.empty() || !std::filesystem::exists(installer_path)) {
+    return false;
+  }
+
+  SHELLEXECUTEINFOW execute_info{};
+  execute_info.cbSize = sizeof(execute_info);
+  execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
+  execute_info.lpVerb = L"runas";
+  execute_info.lpFile = installer_path.c_str();
+  execute_info.lpParameters = L"/SP- /CLOSEAPPLICATIONS /NORESTART";
+  execute_info.lpDirectory = installer_path.parent_path().c_str();
+  execute_info.nShow = SW_SHOWNORMAL;
+
+  const BOOL launched = ::ShellExecuteExW(&execute_info);
+  if (!launched) {
+    return false;
+  }
+
+  if (execute_info.hProcess != nullptr) {
+    ::CloseHandle(execute_info.hProcess);
+  }
+  return true;
+}
+
+bool LaunchSquirrelFromFeed(const path& feed_root, const std::wstring& app_name) {
+  const path setup_exe = feed_root / L"Setup.exe";
+  if (std::filesystem::exists(setup_exe)) {
+    return LaunchInstallerBinary(setup_exe);
+  }
+
+  const path update_exe = feed_root / L"Update.exe";
+  if (!std::filesystem::exists(update_exe)) {
+    return false;
+  }
+
+  const std::wstring command_line =
+      L"\"" + update_exe.wstring() + L"\" --update \"" +
+      feed_root.wstring() + L"\" --processStart \"" + app_name + L"\"";
+  return LaunchDetachedProcess(
+      update_exe.wstring(),
+      command_line,
+      feed_root.wstring());
+}
+
 bool LaunchHelperFromSelf(DWORD parent_process_id) {
   const path current_module_path = GetCurrentModulePath();
   const path helper_path = GetHelperPath();
@@ -411,6 +456,11 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
   }
 
   const auto values = ParseKeyValueLines(manifest_text);
+  auto remove_manifest = [&manifest_path]() {
+    std::error_code delete_error;
+    std::filesystem::remove(manifest_path, delete_error);
+  };
+
   const auto read_value = [&values](const char* key) -> std::string {
     const auto it = values.find(key);
     if (it == values.end()) {
@@ -419,8 +469,17 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
     return it->second;
   };
 
+  const std::string package_type_raw = read_value("packageType");
+  std::string package_path_raw = read_value("packagePath");
+  if (package_path_raw.empty()) {
+    package_path_raw = read_value("installerPath");
+  }
+  if (package_path_raw.empty()) {
+    package_path_raw = read_value("archivePath");
+  }
+
   const std::wstring version = Utf16FromUtf8(read_value("version").c_str());
-  const std::wstring archive_path = Utf16FromUtf8(read_value("archivePath").c_str());
+  const std::wstring package_path = Utf16FromUtf8(package_path_raw.c_str());
   const std::wstring target_dir = Utf16FromUtf8(read_value("targetDir").c_str());
   const std::string executable_name_raw = read_value("appExecutableName");
   const std::wstring app_executable_name =
@@ -428,7 +487,8 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
           ? L"aeterna.exe"
           : Utf16FromUtf8(executable_name_raw.c_str());
 
-  if (version.empty() || archive_path.empty() || target_dir.empty()) {
+  if (version.empty() || package_path.empty()) {
+    remove_manifest();
     ::MessageBoxW(
         nullptr,
         L"更新清单内容不完整，无法继续安装。",
@@ -437,7 +497,72 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
     return false;
   }
 
-  if (!ExtractArchiveToTarget(path(archive_path), path(target_dir))) {
+    const bool squirrel_feed_mode =
+        package_type_raw == "squirrelFeed" ||
+        !read_value("squirrelFeedPath").empty();
+
+    if (squirrel_feed_mode) {
+      const path feed_root = GetUpdateRootPath() / L"squirrel_feed";
+      if (!ExtractArchiveToTarget(path(package_path), feed_root)) {
+        remove_manifest();
+        ::MessageBoxW(
+            nullptr,
+            L"Squirrel 更新负载解压失败。",
+            L"Aeterna 更新失败",
+            MB_ICONERROR | MB_OK);
+        return false;
+      }
+
+      if (!LaunchSquirrelFromFeed(feed_root, app_executable_name)) {
+        remove_manifest();
+        ::MessageBoxW(
+            nullptr,
+            L"Squirrel 更新程序启动失败。",
+            L"Aeterna 更新失败",
+            MB_ICONERROR | MB_OK);
+        return false;
+      }
+
+      remove_manifest();
+      return true;
+    }
+
+    const auto package_extension = path(package_path).extension().wstring();
+    const bool is_exe_package = _wcsicmp(package_extension.c_str(), L".exe") == 0;
+
+    const bool installer_mode =
+      package_type_raw == "installer" ||
+      !read_value("installerPath").empty() ||
+      is_exe_package;
+
+  if (installer_mode) {
+    if (!LaunchInstallerBinary(path(package_path))) {
+      remove_manifest();
+      ::MessageBoxW(
+          nullptr,
+          L"更新安装器启动失败，请检查管理员权限或安全软件拦截。",
+          L"Aeterna 更新失败",
+          MB_ICONERROR | MB_OK);
+      return false;
+    }
+
+    // Installer has taken over. Remove the manifest to avoid relaunch loops.
+    remove_manifest();
+    return true;
+  }
+
+  if (target_dir.empty()) {
+    remove_manifest();
+    ::MessageBoxW(
+        nullptr,
+        L"更新清单缺少目标安装目录，无法继续安装。",
+        L"Aeterna 更新失败",
+        MB_ICONERROR | MB_OK);
+    return false;
+  }
+
+  if (!ExtractArchiveToTarget(path(package_path), path(target_dir))) {
+    remove_manifest();
     ::MessageBoxW(
         nullptr,
         L"更新包解压失败，请检查系统是否支持 tar/zstd。",
@@ -447,8 +572,7 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
   }
 
   WriteSuccessMarker(version);
-  std::error_code delete_error;
-  std::filesystem::remove(manifest_path, delete_error);
+  remove_manifest();
 
   const path installed_app_path = path(target_dir) / app_executable_name;
   if (!LaunchAppBinary(installed_app_path)) {

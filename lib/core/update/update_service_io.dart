@@ -8,15 +8,27 @@ import 'package:flutter/foundation.dart';
 class UpdateService {
   static const String _owner = 'ziyi127';
   static const String _repo = 'Aeterna';
-  static const String _windowsAssetName = 'aeterna-windows-x64.tar.zst';
+  static const String _updateRootName = 'AeternaUpdate';
+  static const List<String> _preferredWindowsSquirrelFeedAssetNames = <String>[
+    'aeterna-windows-squirrel-feed.tar.zst',
+  ];
+  static const List<String> _preferredWindowsInstallerAssetNames = <String>[
+    'aeterna-setup.exe',
+    'aeterna-windows-installer.exe',
+  ];
+  static const List<String> _fallbackWindowsArchiveAssetNames = <String>[
+    'aeterna-windows-x64.tar.zst',
+    'aeterna-windows-x64.zip',
+  ];
   static const String _manifestFileName = 'pending_update.txt';
   static const String _successFileName = 'upgrade_success.txt';
   static const String _helperFileName = 'aeterna_updater_helper.exe';
   static const Duration _networkTimeout = Duration(seconds: 15);
   static const Duration _payloadDownloadTimeout = Duration(minutes: 20);
 
-  static Directory get _rootDirectory =>
-      Directory('${Directory.systemTemp.path}${Platform.pathSeparator}aeterna_update');
+  static Directory get _rootDirectory => Directory(
+    '${Directory.systemTemp.path}${Platform.pathSeparator}$_updateRootName',
+  );
 
   static File get _manifestFile =>
       File('${_rootDirectory.path}${Platform.pathSeparator}$_manifestFileName');
@@ -54,20 +66,22 @@ class UpdateService {
         );
       }
 
-      final asset = release.assets.where((entry) => entry.name == _windowsAssetName).firstOrNull;
-      if (asset == null) {
+      final selectedAsset = _selectWindowsAsset(release.assets);
+      if (selectedAsset == null) {
         return UpdateCheckOutcome(
           platformSupported: true,
           currentVersion: currentVersion,
           latestVersion: release.version,
-          message: '找到新版本 v${release.version}，但没有可下载的 Windows 更新包。',
+          message: '找到新版本 v${release.version}，但没有找到可用的 Windows 更新包（安装器或归档包）。',
         );
       }
 
       final cachedPackage = await _loadPendingPackageIfSameVersion(
         version: release.version,
       );
-      if (cachedPackage != null) {
+      if (cachedPackage != null &&
+          cachedPackage.assetName == selectedAsset.asset.name &&
+          cachedPackage.packageType == selectedAsset.packageType) {
         return UpdateCheckOutcome(
           platformSupported: true,
           currentVersion: currentVersion,
@@ -79,14 +93,19 @@ class UpdateService {
 
       final package = await _downloadAndPreparePackage(
         release: release,
-        asset: asset,
+        selectedAsset: selectedAsset,
       );
+      final status = package.isInstaller
+          ? '已下载 v${release.version} 安装器，确认后将自动退出当前程序并启动升级。'
+          : (package.isSquirrelFeed
+                ? '已下载 v${release.version} 的 Squirrel 更新负载，确认后将由更新助手接管升级。'
+                : '已下载 v${release.version} 更新归档包，确认后将由更新助手完成替换。');
       return UpdateCheckOutcome(
         platformSupported: true,
         currentVersion: currentVersion,
         latestVersion: release.version,
         downloadedPackage: package,
-        message: '已下载 v${release.version} 更新包，安装后下次启动会自动进入升级后的欢迎页。',
+        message: status,
       );
     } catch (error) {
       final cachedPackage = Platform.isWindows
@@ -120,7 +139,7 @@ class UpdateService {
 
       final process = await Process.start(
         helperPath,
-        ['--install-update'],
+        ['--install-update', '--parent-pid=$pid'],
         mode: ProcessStartMode.detached,
         runInShell: false,
       );
@@ -156,36 +175,47 @@ class UpdateService {
 
   static Future<DownloadedUpdatePackage> _downloadAndPreparePackage({
     required _GitHubRelease release,
-    required _GitHubReleaseAsset asset,
+    required _SelectedAsset selectedAsset,
   }) async {
-    final downloadDir = Directory(
-      '${Directory.systemTemp.path}${Platform.pathSeparator}aeterna_update',
-    );
+    final downloadDir = _rootDirectory;
     await downloadDir.create(recursive: true);
-    final archivePath =
-        '${downloadDir.path}${Platform.pathSeparator}${asset.name}';
+    final packagePath =
+        '${downloadDir.path}${Platform.pathSeparator}${selectedAsset.asset.name}';
     final client = HttpClient();
-    client.userAgent = 'AeternaUpdater/1.0';
-    final request = await client.getUrl(Uri.parse(asset.downloadUrl));
+    client.userAgent = 'AeternaUpdater/2.0';
+    final request = await client.getUrl(
+      Uri.parse(selectedAsset.asset.downloadUrl),
+    );
     request.headers.add(HttpHeaders.acceptHeader, 'application/octet-stream');
     final response = await request.close().timeout(_networkTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError('HTTP ${response.statusCode}');
     }
-    final file = File(archivePath);
+    final file = File(packagePath);
     final sink = file.openWrite();
     await response.pipe(sink).timeout(_payloadDownloadTimeout);
     await sink.flush();
     await sink.close();
 
-    final targetDir = File(Platform.resolvedExecutable).parent.path;
+    if (selectedAsset.asset.size > 0) {
+      final downloadedBytes = await file.length();
+      if (downloadedBytes != selectedAsset.asset.size) {
+        throw StateError(
+          '下载文件大小不匹配，expected=${selectedAsset.asset.size}, actual=$downloadedBytes',
+        );
+      }
+    }
+
     final package = DownloadedUpdatePackage(
+      packageType: selectedAsset.packageType,
       version: release.version,
-      assetName: asset.name,
-      archivePath: archivePath,
-      targetDir: targetDir,
+      assetName: selectedAsset.asset.name,
+      packagePath: packagePath,
+      targetDir: selectedAsset.packageType == UpdatePackageType.archive
+          ? File(Platform.resolvedExecutable).parent.path
+          : '',
       appExecutableName: 'aeterna.exe',
-      downloadUrl: asset.downloadUrl,
+      downloadUrl: selectedAsset.asset.downloadUrl,
       releaseUrl: release.releaseUrl,
     );
     await _writeKeyValueFile(_manifestFile, package.toKeyValueLines());
@@ -194,21 +224,113 @@ class UpdateService {
 
   static Future<_GitHubRelease?> _fetchLatestRelease() async {
     final client = HttpClient();
-    client.userAgent = 'AeternaUpdater/1.0';
+    client.userAgent = 'AeternaUpdater/2.0';
     final request = await client.getUrl(
       Uri.https('api.github.com', '/repos/$_owner/$_repo/releases/latest'),
     );
-    request.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+    request.headers.set(
+      HttpHeaders.acceptHeader,
+      'application/vnd.github+json',
+    );
     final response = await request.close().timeout(_networkTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError('GitHub API returned ${response.statusCode}');
     }
     final body = await response
-      .transform(utf8.decoder)
-      .join()
-      .timeout(_networkTimeout);
+        .transform(utf8.decoder)
+        .join()
+        .timeout(_networkTimeout);
     final jsonData = jsonDecode(body) as Map<String, dynamic>;
     return _GitHubRelease.fromJson(jsonData);
+  }
+
+  static _SelectedAsset? _selectWindowsAsset(List<_GitHubReleaseAsset> assets) {
+    final normalized = assets
+        .where((asset) => asset.name.trim().isNotEmpty)
+        .toList(growable: false);
+    if (normalized.isEmpty) {
+      return null;
+    }
+
+    _GitHubReleaseAsset? findExact(List<String> names) {
+      for (final expected in names) {
+        final matched = normalized
+            .where((asset) => asset.name.toLowerCase() == expected)
+            .firstOrNull;
+        if (matched != null) {
+          return matched;
+        }
+      }
+      return null;
+    }
+
+    final exactSquirrelFeed = findExact(
+      _preferredWindowsSquirrelFeedAssetNames,
+    );
+    if (exactSquirrelFeed != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.squirrelFeed,
+        asset: exactSquirrelFeed,
+      );
+    }
+
+    final fuzzySquirrelFeed = normalized.where((asset) {
+      final name = asset.name.toLowerCase();
+      return name.endsWith('.tar.zst') &&
+          name.contains('squirrel') &&
+          name.contains('windows');
+    }).firstOrNull;
+    if (fuzzySquirrelFeed != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.squirrelFeed,
+        asset: fuzzySquirrelFeed,
+      );
+    }
+
+    final exactInstaller = findExact(_preferredWindowsInstallerAssetNames);
+    if (exactInstaller != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.installer,
+        asset: exactInstaller,
+      );
+    }
+
+    final fuzzyInstaller = normalized.where((asset) {
+      final name = asset.name.toLowerCase();
+      return name.endsWith('.exe') &&
+          (name.contains('setup') || name.contains('installer')) &&
+          name.contains('aeterna');
+    }).firstOrNull;
+    if (fuzzyInstaller != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.installer,
+        asset: fuzzyInstaller,
+      );
+    }
+
+    final exactArchive = findExact(_fallbackWindowsArchiveAssetNames);
+    if (exactArchive != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.archive,
+        asset: exactArchive,
+      );
+    }
+
+    final fuzzyArchive = normalized.where((asset) {
+      final name = asset.name.toLowerCase();
+      final isArchive = name.endsWith('.tar.zst') || name.endsWith('.zip');
+      return isArchive &&
+          name.contains('windows') &&
+          (name.contains('x64') || name.contains('win64'));
+    }).firstOrNull;
+    if (fuzzyArchive != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.archive,
+        asset: fuzzyArchive,
+      );
+    }
+
+    return null;
   }
 
   static Future<void> _writeKeyValueFile(
@@ -220,7 +342,7 @@ class UpdateService {
     for (final entry in values.entries) {
       buffer.writeln('${entry.key}=${entry.value}');
     }
-    await file.writeAsString(buffer.toString());
+    await file.writeAsString(buffer.toString(), encoding: utf8);
   }
 
   static Map<String, String> _parseKeyValueLines(List<String> lines) {
@@ -271,7 +393,8 @@ class UpdateService {
       final lines = await _manifestFile.readAsLines();
       final values = _parseKeyValueLines(lines);
       final package = DownloadedUpdatePackage.fromKeyValueLines(values);
-      if (package.archivePath.isEmpty || !File(package.archivePath).existsSync()) {
+      if (package.packagePath.isEmpty ||
+          !File(package.packagePath).existsSync()) {
         return null;
       }
       return package;
@@ -296,7 +419,10 @@ class _GitHubRelease {
       releaseUrl: (json['html_url'] as String?) ?? '',
       assets: assetsRaw
           .whereType<Map>()
-          .map((entry) => _GitHubReleaseAsset.fromJson(Map<String, dynamic>.from(entry)))
+          .map(
+            (entry) =>
+                _GitHubReleaseAsset.fromJson(Map<String, dynamic>.from(entry)),
+          )
           .toList(),
     );
   }
@@ -310,17 +436,27 @@ class _GitHubReleaseAsset {
   const _GitHubReleaseAsset({
     required this.name,
     required this.downloadUrl,
+    required this.size,
   });
 
   factory _GitHubReleaseAsset.fromJson(Map<String, dynamic> json) {
     return _GitHubReleaseAsset(
       name: (json['name'] as String?) ?? '',
       downloadUrl: (json['browser_download_url'] as String?) ?? '',
+      size: (json['size'] as num?)?.toInt() ?? 0,
     );
   }
 
   final String name;
   final String downloadUrl;
+  final int size;
+}
+
+class _SelectedAsset {
+  const _SelectedAsset({required this.packageType, required this.asset});
+
+  final UpdatePackageType packageType;
+  final _GitHubReleaseAsset asset;
 }
 
 class _Version implements Comparable<_Version> {
@@ -376,7 +512,10 @@ class _Version implements Comparable<_Version> {
     if (preRelease.isNotEmpty && other.preRelease.isEmpty) {
       return -1;
     }
-    final preReleaseComparison = _comparePrerelease(preRelease, other.preRelease);
+    final preReleaseComparison = _comparePrerelease(
+      preRelease,
+      other.preRelease,
+    );
     if (preReleaseComparison != 0) {
       return preReleaseComparison;
     }
@@ -384,9 +523,17 @@ class _Version implements Comparable<_Version> {
   }
 
   static int _comparePrerelease(String left, String right) {
-    final leftParts = left.split(RegExp(r'[.-]')).where((part) => part.isNotEmpty).toList();
-    final rightParts = right.split(RegExp(r'[.-]')).where((part) => part.isNotEmpty).toList();
-    final count = leftParts.length < rightParts.length ? leftParts.length : rightParts.length;
+    final leftParts = left
+        .split(RegExp(r'[.-]'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    final rightParts = right
+        .split(RegExp(r'[.-]'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    final count = leftParts.length < rightParts.length
+        ? leftParts.length
+        : rightParts.length;
     for (var index = 0; index < count; index++) {
       final leftPart = leftParts[index];
       final rightPart = rightParts[index];

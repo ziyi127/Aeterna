@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
-    paths:
-      - pages/**
-      - .github/workflows/pages.yml
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:

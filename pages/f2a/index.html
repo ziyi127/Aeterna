@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Redirecting...</title>
     <script>
-      const next = new URL('../tools/f2a/index.html', window.location.href);
+      const next = new URL('../tools/f2a/', window.location.href);
       const current = new URL(window.location.href);
       for (const [k, v] of current.searchParams.entries()) {
         next.searchParams.set(k, v);

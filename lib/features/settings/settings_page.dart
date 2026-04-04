@@ -454,7 +454,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   String _buildF2aPageUrl({required String secret}) {
-    return Uri.https('ziyi127.github.io', '/Aeterna/', {
+    return Uri.https('ziyi127.github.io', '/Aeterna/tools/f2a/', {
       'entry': 'f2a',
       'secret': secret,
     }).toString();

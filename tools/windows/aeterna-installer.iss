@@ -14,6 +14,8 @@
   #define OutputDir "build\\windows\\installer"
 #endif
 
+#define ChineseMessagesFile "compiler:Default.isl,chinesesimp-custom.isl"
+
 [Setup]
 AppId={{DFE97A6E-7B48-4629-8E95-C8E238F7A0F8}
 AppName={#MyAppName}
@@ -36,7 +38,7 @@ PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "{#ChineseMessagesFile}"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

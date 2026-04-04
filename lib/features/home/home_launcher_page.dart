@@ -10,11 +10,13 @@ class HomeLauncherPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The launcher reads live data so the plan count stays current.
     final controller = TimerScope.of(context);
 
     return Scaffold(
       body: LayoutBuilder(
         builder: (context, constraints) {
+          // Derive the layout from the viewport so the launcher stays responsive.
           final width = constraints.maxWidth;
           final height = constraints.maxHeight;
           final compact = width < 940 || height < 760;
@@ -85,6 +87,7 @@ class _LauncherHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Keep the product logo and name together as the page header.
     return Row(
       children: [
         const AeternaLogo(size: 38, strokeWidth: 5),
@@ -110,6 +113,7 @@ class _AboutTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The about tile is the entry point for version and project information.
     return DashboardTile(
       title: '关于 About',
       subtitle: '查看版本、特性与使用说明',

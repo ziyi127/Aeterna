@@ -17,9 +17,11 @@ namespace {
 using std::filesystem::path;
 
 const wchar_t kUpdateRootName[] = L"AeternaUpdate";
+const wchar_t kPresentationRootName[] = L"AeternaPresentation";
 const wchar_t kManifestFileName[] = L"pending_update.txt";
 const wchar_t kSuccessFileName[] = L"upgrade_success.txt";
 const wchar_t kHelperFileName[] = L"aeterna_updater_helper.exe";
+const wchar_t kPresentationMarkerFileName[] = L"presentation_watchdog_state.txt";
 
 path GetCurrentModulePath() {
   wchar_t buffer[MAX_PATH] = {};
@@ -49,6 +51,19 @@ path GetSuccessPath() {
 
 path GetHelperPath() {
   return GetUpdateRootPath() / kHelperFileName;
+}
+
+path GetPresentationRootPath() {
+  wchar_t buffer[MAX_PATH] = {};
+  const DWORD length = ::GetTempPathW(MAX_PATH, buffer);
+  if (length == 0 || length >= MAX_PATH) {
+    return {};
+  }
+  return path(buffer) / kPresentationRootName;
+}
+
+path GetPresentationMarkerPath() {
+  return GetPresentationRootPath() / kPresentationMarkerFileName;
 }
 
 bool HasArgument(const std::vector<std::string>& args, const std::string& value) {
@@ -134,6 +149,109 @@ bool WaitForProcess(DWORD process_id) {
   }
   ::WaitForSingleObject(process, 15000);
   ::CloseHandle(process);
+  return true;
+}
+
+bool IsProcessRunning(DWORD process_id) {
+  if (process_id == 0) {
+    return false;
+  }
+  HANDLE process = ::OpenProcess(SYNCHRONIZE, FALSE, process_id);
+  if (process == nullptr) {
+    return false;
+  }
+  const DWORD wait_result = ::WaitForSingleObject(process, 0);
+  ::CloseHandle(process);
+  return wait_result == WAIT_TIMEOUT;
+}
+
+bool LaunchDetachedProcess(
+    const std::wstring& application_name,
+    const std::wstring& command_line,
+    const std::wstring& working_directory) {
+  STARTUPINFOW startup_info{};
+  startup_info.cb = sizeof(startup_info);
+  PROCESS_INFORMATION process_info{};
+  std::wstring mutable_command_line = command_line;
+  const BOOL started = ::CreateProcessW(
+      application_name.empty() ? nullptr : application_name.c_str(),
+      mutable_command_line.data(),
+      nullptr,
+      nullptr,
+      FALSE,
+      0,
+      nullptr,
+      working_directory.empty() ? nullptr : working_directory.c_str(),
+      &startup_info,
+      &process_info);
+  if (!started) {
+    return false;
+  }
+  ::CloseHandle(process_info.hProcess);
+  ::CloseHandle(process_info.hThread);
+  return true;
+}
+
+bool ParseUnsignedLong(const std::string& text, DWORD* value) {
+  if (value == nullptr || text.empty()) {
+    return false;
+  }
+  try {
+    const unsigned long parsed = std::stoul(text);
+    *value = static_cast<DWORD>(parsed);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool LaunchPresentationSession(const path& executable_path) {
+  const std::wstring command_line = L"--presentation-resume=monitor";
+  return LaunchDetachedProcess(
+      executable_path.wstring(),
+      command_line,
+      executable_path.parent_path().wstring());
+}
+
+bool RunPresentationWatchdogMode(const std::vector<std::string>& arguments) {
+  const std::string parent_pid_text = ArgumentValue(arguments, "--watch-parent-pid=");
+  DWORD parent_pid = 0;
+  if (!ParseUnsignedLong(parent_pid_text, &parent_pid)) {
+    return false;
+  }
+
+  const path marker_path = GetPresentationMarkerPath();
+  std::string marker_text;
+  if (!ReadTextFile(marker_path, &marker_text)) {
+    return true;
+  }
+
+  const auto values = ParseKeyValueLines(marker_text);
+  const auto state_it = values.find("state");
+  if (state_it == values.end() || state_it->second != "active") {
+    return true;
+  }
+
+  const path executable_path = GetCurrentModulePath();
+  if (executable_path.empty()) {
+    return false;
+  }
+
+  // Keep watching until the presentation process disappears or the marker is cleared.
+  while (std::filesystem::exists(marker_path)) {
+    if (!IsProcessRunning(parent_pid)) {
+      // The presentation host died unexpectedly, so relaunch directly into the monitor page.
+      for (int attempt = 0; attempt < 3; ++attempt) {
+        if (LaunchPresentationSession(executable_path)) {
+          return true;
+        }
+        ::Sleep(500);
+      }
+      return false;
+    }
+    ::Sleep(500);
+  }
+
   return true;
 }
 
@@ -348,6 +466,10 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   const std::vector<std::string> arguments = GetCommandLineArguments();
+  if (HasArgument(arguments, "--presentation-watchdog")) {
+    return RunPresentationWatchdogMode(arguments) ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+
   if (HasArgument(arguments, "--install-update")) {
     const bool updated = RunInstallerMode(arguments);
     return updated ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:aeterna/core/config/config_manager.dart';
+import 'package:aeterna/core/resilience/circuit_breaker.dart';
 import 'package:aeterna/core/security/two_factor_totp.dart';
 import 'package:aeterna/core/time/exam_models.dart';
 import 'package:aeterna/core/time/timer_controller.dart';
@@ -26,37 +27,62 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   static const MethodChannel _windowSecurityChannel = MethodChannel(
     'aeterna/window_security',
   );
+  // Controls how long the overlay stays visible after pointer activity.
   static const Duration _overlayVisibleDuration = Duration(seconds: 3);
+  // Users must hold the exit button for a fixed time to leave presentation.
   static const Duration _exitHoldTarget = Duration(seconds: 5);
+  // Reminder cards stay on screen briefly so they are noticeable but not sticky.
   static const Duration _reminderShowDuration = Duration(seconds: 4);
 
+  // Display settings are loaded from persisted storage and applied to the page.
   DisplaySettings _settings = const DisplaySettings(
     fontScale: 1.0,
     roomLabel: '试室 A01',
   );
+  // The control overlay is hidden by default and re-shown on interaction.
   bool _overlayVisible = true;
+  // Long-press exit/settings gates prevent accidental leaving or reconfiguration.
   bool _isHoldingExit = false;
   bool _isHoldingSettings = false;
+  // Track progress for the long-press UI so the user sees feedback.
   Duration _holdElapsed = Duration.zero;
   Duration _settingsHoldElapsed = Duration.zero;
 
+  // Timers drive overlay auto-hide, hold progress, reminders, and keep-alive.
   Timer? _overlayTimer;
   Timer? _exitHoldTimer;
   Timer? _settingsHoldTimer;
   Timer? _reminderTimer;
 
+  // Store the previous window state so it can be restored on exit.
   bool _enteredFullscreen = false;
   bool _wasFullscreen = false;
   bool _wasAlwaysOnTop = false;
   bool _enteredAlwaysOnTop = false;
   bool _windowsUiAccessEnabled = false;
+  // Periodically re-assert the presentation state on Windows.
   Timer? _desktopLockKeepAliveTimer;
+  // If platform calls fail repeatedly, drop to a safer compatibility mode.
+  bool _windowOpsDegraded = false;
+  bool _windowOpsDegradeNoticeShown = false;
+  int _windowOpsFailureCount = 0;
+  // Saving display settings is guarded so repeated IO failures do not loop forever.
+  final CircuitBreaker _displaySettingsSaveBreaker = CircuitBreaker(
+    failureThreshold: 3,
+    recoveryTimeout: const Duration(seconds: 20),
+    name: 'monitor-display-save',
+  );
 
+  // Keep a stable link to the shared timer controller so we can react to ticks.
   TimerController? _boundController;
+  // Reminders should only fire once per exam moment per day.
   final Set<String> _firedReminderKeys = <String>{};
+  // Queue reminder cards so they appear one at a time.
   final Queue<_ReminderPayload> _reminderQueue = Queue<_ReminderPayload>();
+  // The currently displayed reminder, if any.
   _ReminderPayload? _activeReminder;
 
+  // Clear reminder history once per day so tomorrow's schedule can fire again.
   DateTime? _lastReminderCleanupDate;
 
   @override
@@ -75,6 +101,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Rebind the listener when the surrounding TimerScope changes.
     final controller = TimerScope.read(context);
     if (_boundController == controller) {
       return;
@@ -86,6 +113,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
   @override
   void dispose() {
+    // Always detach from controller and cancel timers before the widget dies.
     _boundController?.removeListener(_onControllerTick);
     _overlayTimer?.cancel();
     _exitHoldTimer?.cancel();
@@ -97,6 +125,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   Future<bool> _isWindowsUiAccessEnabled() async {
+    // The native runner reports whether elevated UIAccess is available.
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
       return false;
     }
@@ -110,7 +139,43 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     }
   }
 
+  Future<void> _setWindowsPresentationInputLock(bool enabled) async {
+    // Let the Windows runner block system keys and gestures while presenting.
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return;
+    }
+    try {
+      await _windowSecurityChannel.invokeMethod<bool>(
+        'setPresentationInputLock',
+        <String, dynamic>{'enabled': enabled},
+      );
+    } catch (_) {
+      // If native input lock is unavailable, continue with existing fallback.
+    }
+  }
+
+  void _registerWindowOperationFailure() {
+    // After repeated failures, stop fighting the platform and use a safer mode.
+    _windowOpsFailureCount++;
+    if (_windowOpsFailureCount < 2 || _windowOpsDegraded) {
+      return;
+    }
+
+    _windowOpsDegraded = true;
+    _desktopLockKeepAliveTimer?.cancel();
+    _desktopLockKeepAliveTimer = null;
+
+    if (!mounted || _windowOpsDegradeNoticeShown) {
+      return;
+    }
+    _windowOpsDegradeNoticeShown = true;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('检测到系统权限受限，已自动切换为兼容显示模式。')));
+  }
+
   void _startDesktopLockKeepAlive() {
+    // Keep-alive periodically reasserts fullscreen/top-most state on desktop.
     if (kIsWeb) {
       return;
     }
@@ -120,46 +185,48 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     }
 
     // Windows without UIAccess uses degraded strategy:
-    // keep forcing fullscreen + top-most + focus to reduce overlay loss.
+    // avoid aggressive fullscreen retries and keep only top-most/focus checks.
     final isWindowsWithoutUiAccess =
         defaultTargetPlatform == TargetPlatform.windows &&
         !_windowsUiAccessEnabled;
+    if (_windowOpsDegraded) {
+      return;
+    }
     final keepAliveInterval = isWindowsWithoutUiAccess
-      ? const Duration(milliseconds: 900)
-      : const Duration(milliseconds: 1800);
+        ? const Duration(milliseconds: 1800)
+        : const Duration(milliseconds: 1800);
 
     _desktopLockKeepAliveTimer?.cancel();
-    _desktopLockKeepAliveTimer = Timer.periodic(
-      keepAliveInterval,
-      (_) async {
-        try {
-          final isFullscreen = await windowManager.isFullScreen().timeout(
-            const Duration(milliseconds: 220),
-            onTimeout: () => false,
-          );
-          if (!isFullscreen) {
-            await windowManager.setFullScreen(true);
-          }
-
-          final isOnTop = await windowManager.isAlwaysOnTop().timeout(
-            const Duration(milliseconds: 220),
-            onTimeout: () => false,
-          );
-          if (!isOnTop) {
-            await windowManager.setAlwaysOnTop(true);
-          }
-
-          if (isWindowsWithoutUiAccess && (!isFullscreen || !isOnTop)) {
-            await windowManager.focus();
-          }
-        } catch (_) {
-          // Ignore unsupported behavior.
+    _desktopLockKeepAliveTimer = Timer.periodic(keepAliveInterval, (_) async {
+      try {
+        var isFullscreen = await windowManager.isFullScreen().timeout(
+          const Duration(milliseconds: 220),
+          onTimeout: () => false,
+        );
+        if (!isFullscreen && !isWindowsWithoutUiAccess) {
+          await windowManager.setFullScreen(true);
+          isFullscreen = true;
         }
-      },
-    );
+
+        final isOnTop = await windowManager.isAlwaysOnTop().timeout(
+          const Duration(milliseconds: 220),
+          onTimeout: () => false,
+        );
+        if (!isOnTop) {
+          await windowManager.setAlwaysOnTop(true);
+        }
+
+        if (isWindowsWithoutUiAccess && (!isFullscreen || !isOnTop)) {
+          await windowManager.focus();
+        }
+      } catch (_) {
+        _registerWindowOperationFailure();
+      }
+    });
   }
 
   void _onControllerTick() {
+    // Reminder checks are driven by the shared clock tick.
     _checkReminderMoments();
   }
 
@@ -167,6 +234,10 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     // Windows fullscreen may fail intermittently when transition races with
     // native window events, so retry a few times with fallback maximize.
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return;
+    }
+
+    if (_windowOpsDegraded || !_windowsUiAccessEnabled) {
       return;
     }
 
@@ -183,12 +254,14 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
         await windowManager.setFullScreen(true);
         await Future<void>.delayed(const Duration(milliseconds: 120));
       } catch (_) {
+        _registerWindowOperationFailure();
         // Ignore transient platform failures and continue retrying.
       }
     }
   }
 
   Future<void> _enterPresentationMode() async {
+    // Enter presentation mode once the platform window is ready.
     if (kIsWeb) {
       return;
     }
@@ -198,6 +271,11 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
         defaultTargetPlatform == TargetPlatform.linux ||
         defaultTargetPlatform == TargetPlatform.macOS;
 
+    // Lock input first so the rest of the presentation setup cannot be
+    // interrupted by accidental shortcuts while the window is transitioning.
+    await _setWindowsPresentationInputLock(true);
+
+    // Query UIAccess after the lock request so the native layer can adapt.
     _windowsUiAccessEnabled = await _isWindowsUiAccessEnabled();
 
     // Step 1: Try fullscreen first for immersive presentation.
@@ -215,6 +293,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
       // Ignore unsupported fullscreen behavior and continue with top-most mode.
       // Window may not be fully initialized yet on some platforms.
       _wasFullscreen = false;
+      _registerWindowOperationFailure();
     }
 
     // Step 2: Cross-platform top-most fallback (uiAccess-like behavior).
@@ -233,6 +312,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
         // Ignore unsupported always-on-top behavior.
         // Window may not be fully initialized yet on some platforms.
         _wasAlwaysOnTop = false;
+        _registerWindowOperationFailure();
       }
 
       try {
@@ -248,12 +328,15 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   Future<void> _leavePresentationMode() async {
+    // Restore the window to its prior state before the widget disappears.
     if (kIsWeb) {
       return;
     }
 
     _desktopLockKeepAliveTimer?.cancel();
     _desktopLockKeepAliveTimer = null;
+
+    await _setWindowsPresentationInputLock(false);
 
     // Restore always-on-top state first.
     if (_enteredAlwaysOnTop) {
@@ -277,16 +360,22 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   Future<void> _loadDisplaySettings() async {
-    final loaded = await ConfigManager.loadDisplaySettings();
-    if (!mounted) {
-      return;
+    // Fail softly so the monitor still opens even if preferences cannot load.
+    try {
+      final loaded = await ConfigManager.loadDisplaySettings();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _settings = loaded;
+      });
+    } catch (error) {
+      debugPrint('load display settings failed in monitor page: $error');
     }
-    setState(() {
-      _settings = loaded;
-    });
   }
 
   void _showControlsTemporarily() {
+    // Any pointer activity should briefly reveal the controls overlay.
     if (!mounted) {
       return;
     }
@@ -305,6 +394,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   void _startExitHold() {
+    // Start a timed hold so exiting requires an intentional long press.
     if (_isHoldingExit) {
       return;
     }
@@ -334,6 +424,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   void _cancelExitHold() {
+    // Releasing early clears the hold progress and keeps presentation active.
     if (!_isHoldingExit) {
       return;
     }
@@ -347,6 +438,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   void _startSettingsHold() {
+    // Settings is guarded by the same hold mechanic as exit.
     if (_isHoldingSettings) {
       return;
     }
@@ -378,6 +470,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   void _cancelSettingsHold() {
+    // Canceling the hold should restore the overlay and reset progress.
     if (!_isHoldingSettings) {
       return;
     }
@@ -391,6 +484,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   Future<void> _confirmOpenSettings() async {
+    // The settings shortcut is protected by the same auth flow as exit.
     if (!mounted) {
       return;
     }
@@ -420,6 +514,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   Future<void> _confirmExitPresentation() async {
+    // Exiting presentation mode is intentionally multi-step: hold, auth, 2FA, then restore.
     if (!mounted) {
       return;
     }
@@ -434,10 +529,10 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     final planStart = controller.planStartDate;
     final planEnd = controller.planEndDate;
     final isInExamPeriod =
-      planStart != null &&
-      planEnd != null &&
-      !controller.now.isBefore(planStart) &&
-      controller.now.isBefore(planEnd.add(const Duration(days: 1)));
+        planStart != null &&
+        planEnd != null &&
+        !controller.now.isBefore(planStart) &&
+        controller.now.isBefore(planEnd.add(const Duration(days: 1)));
     final bypassBySafeMode = _settings.safeMode && isInExamPeriod;
     final needsPassword =
         _settings.exitPasswordEnabled &&
@@ -488,6 +583,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   bool _matchesLocalPassword(String enteredPassword) {
+    // Compare hashes only; the raw password never needs to be retained.
     final storedHash = _settings.exitPassword.trim();
     if (storedHash.isEmpty) {
       return false;
@@ -497,6 +593,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   bool _matchesTwoFactorCode(String enteredCode, DateTime at) {
+    // Reuse the shared TOTP verifier so web and desktop follow the same rules.
     return TwoFactorTotp.verifyCode(
       code: enteredCode,
       factors: _settings.twoFactorEntries,
@@ -505,6 +602,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   Future<void> _openDisplaySettingsDialog() async {
+    // Keep this dialog local so users can preview a font scale before saving.
     _showControlsTemporarily();
     double localScale = _settings.fontScale;
 
@@ -544,9 +642,9 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
                 ),
                 FilledButton(
                   onPressed: () {
-                    Navigator.of(ctx).pop(
-                      _settings.copyWith(fontScale: localScale),
-                    );
+                    Navigator.of(
+                      ctx,
+                    ).pop(_settings.copyWith(fontScale: localScale));
                   },
                   child: const Text('保存'),
                 ),
@@ -564,10 +662,22 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     setState(() {
       _settings = result;
     });
-    await ConfigManager.saveDisplaySettings(result);
+    await _displaySettingsSaveBreaker.runOrNull(() async {
+      await ConfigManager.saveDisplaySettings(result);
+    });
+
+    if (!mounted) {
+      return;
+    }
+    if (_displaySettingsSaveBreaker.isOpen) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('设置保存暂时失败，已进入冷却恢复期。')));
+    }
   }
 
   void _checkReminderMoments() {
+    // Only the bound controller can provide live time and exam windows.
     final controller = _boundController;
     if (controller == null) {
       return;
@@ -638,6 +748,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   void _cleanupExpiredReminders() {
+    // Daily cleanup ensures reminders can fire again for the next day.
     final now = DateTime.now();
     final last = _lastReminderCleanupDate;
     if (last == null ||
@@ -655,6 +766,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
     required DateTime now,
     required _ReminderPayload payload,
   }) {
+    // Ignore duplicates and only fire when the current time is near the target.
     if (_firedReminderKeys.contains(key)) {
       return;
     }
@@ -669,6 +781,7 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
   }
 
   void _showNextReminderIfIdle() {
+    // Show reminders one by one so the screen is never flooded.
     if (!mounted || _activeReminder != null || _reminderQueue.isEmpty) {
       return;
     }
@@ -692,12 +805,20 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Derive layout scale from the current viewport and device pixel ratio.
     final controller = _boundController ?? TimerScope.read(context);
     final scheme = Theme.of(context).colorScheme;
     final viewport = MediaQuery.sizeOf(context);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
     final shortestSide = math.min(viewport.width, viewport.height);
     final panelScale = _settings.fontScale.clamp(0.7, 1.8);
     final panelGap = (shortestSide * 0.012).clamp(8.0, 18.0).toDouble();
+    final physicalWidth = viewport.width * dpr;
+    final physicalHeight = viewport.height * dpr;
+    final compactByLogical = viewport.width < 980 || viewport.height < 640;
+    final compactByPhysical = physicalWidth < 1600 || physicalHeight < 900;
+    // Require both logical and physical compactness before collapsing the header.
+    final useCompactTopBar = compactByLogical && compactByPhysical;
 
     return PopScope(
       canPop: false,
@@ -713,199 +834,227 @@ class _LiveMonitorPageState extends State<LiveMonitorPage> {
           behavior: HitTestBehavior.translucent,
           onTap: _showControlsTemporarily,
           child: Scaffold(
-          backgroundColor: scheme.surface,
-          body: SafeArea(
-            child: Stack(
-              children: [
-                Padding(
-                  padding: AeternaTokens.pagePaddingFor(
-                    MediaQuery.sizeOf(context).width,
-                  ),
-                  child: Column(
-                    children: [
-                      _TopInfoBar(
-                        controller: controller,
-                        roomLabel: _settings.roomLabel,
-                        fontScale: _settings.fontScale,
-                        compact: viewport.width < 980 || viewport.height < 640,
-                      ),
-                      SizedBox(height: panelGap),
-                      Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final isWide =
-                                constraints.maxWidth >= 1200 &&
-                                constraints.maxHeight >= 620;
-                            if (isWide) {
-                              final leftUpperFlex =
-                                  (100 * panelScale).round().clamp(80, 160);
-                              final leftLowerFlex =
-                                  (92 * panelScale).round().clamp(76, 148);
-                              final rightUpperFlex =
-                                  (120 * panelScale).round().clamp(92, 188);
-                              final rightLowerFlex =
-                                  (86 * panelScale).round().clamp(70, 140);
-                              return Row(
+            backgroundColor: scheme.surface,
+            body: SafeArea(
+              child: Stack(
+                children: [
+                  Padding(
+                    padding: AeternaTokens.pagePaddingFor(
+                      MediaQuery.sizeOf(context).width,
+                    ),
+                    child: Column(
+                      children: [
+                        _TopInfoBar(
+                          controller: controller,
+                          roomLabel: _settings.roomLabel,
+                          fontScale: _settings.fontScale,
+                          compact: useCompactTopBar,
+                        ),
+                        SizedBox(height: panelGap),
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final logicalWide =
+                                  constraints.maxWidth >= 1200 &&
+                                  constraints.maxHeight >= 620;
+                              final physicalWide =
+                                  (constraints.maxWidth * dpr) >= 1700 &&
+                                  (constraints.maxHeight * dpr) >= 900;
+                              final landscapeLike =
+                                  constraints.maxWidth >=
+                                  constraints.maxHeight * 1.12;
+                                // Treat the page as wide only when the screen is both wide and stable.
+                              final isWide =
+                                  landscapeLike &&
+                                  (logicalWide || physicalWide);
+                              if (isWide) {
+                                final leftUpperFlex = (100 * panelScale)
+                                    .round()
+                                    .clamp(80, 160);
+                                final leftLowerFlex = (92 * panelScale)
+                                    .round()
+                                    .clamp(76, 148);
+                                final rightUpperFlex = (120 * panelScale)
+                                    .round()
+                                    .clamp(92, 188);
+                                final rightLowerFlex = (86 * panelScale)
+                                    .round()
+                                    .clamp(70, 140);
+                                return Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 3,
+                                      child: Column(
+                                        children: [
+                                          Expanded(
+                                            flex: leftUpperFlex,
+                                            child: _ClockPanel(
+                                              controller: controller,
+                                              fontScale: _settings.fontScale,
+                                            ),
+                                          ),
+                                          SizedBox(height: panelGap),
+                                          Expanded(
+                                            flex: leftLowerFlex,
+                                            child: _SubjectPanel(
+                                              controller: controller,
+                                              fontScale: _settings.fontScale,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    SizedBox(width: panelGap),
+                                    Expanded(
+                                      flex: 2,
+                                      child: Column(
+                                        children: [
+                                          Expanded(
+                                            flex: rightUpperFlex,
+                                            child: _AllExamsPanel(
+                                              controller: controller,
+                                              fontScale: _settings.fontScale,
+                                            ),
+                                          ),
+                                          SizedBox(height: panelGap),
+                                          Expanded(
+                                            flex: rightLowerFlex,
+                                            child: _ProgressPanel(
+                                              controller: controller,
+                                              fontScale: _settings.fontScale,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }
+
+                              return Column(
                                 children: [
                                   Expanded(
-                                    flex: 3,
-                                    child: Column(
-                                      children: [
-                                        Expanded(
-                                          flex: leftUpperFlex,
-                                          child: _ClockPanel(
-                                            controller: controller,
-                                            fontScale: _settings.fontScale,
-                                          ),
-                                        ),
-                                        SizedBox(height: panelGap),
-                                        Expanded(
-                                          flex: leftLowerFlex,
-                                          child: _SubjectPanel(
-                                            controller: controller,
-                                            fontScale: _settings.fontScale,
-                                          ),
-                                        ),
-                                      ],
+                                    flex: (108 * panelScale).round().clamp(
+                                      82,
+                                      170,
+                                    ),
+                                    child: _ClockPanel(
+                                      controller: controller,
+                                      fontScale: _settings.fontScale,
                                     ),
                                   ),
-                                  SizedBox(width: panelGap),
+                                  SizedBox(height: panelGap),
                                   Expanded(
-                                    flex: 2,
-                                    child: Column(
-                                      children: [
-                                        Expanded(
-                                          flex: rightUpperFlex,
-                                          child: _AllExamsPanel(
-                                            controller: controller,
-                                            fontScale: _settings.fontScale,
-                                          ),
-                                        ),
-                                        SizedBox(height: panelGap),
-                                        Expanded(
-                                          flex: rightLowerFlex,
-                                          child: _ProgressPanel(
-                                            controller: controller,
-                                            fontScale: _settings.fontScale,
-                                          ),
-                                        ),
-                                      ],
+                                    flex: (94 * panelScale).round().clamp(
+                                      78,
+                                      150,
+                                    ),
+                                    child: _SubjectPanel(
+                                      controller: controller,
+                                      fontScale: _settings.fontScale,
+                                    ),
+                                  ),
+                                  SizedBox(height: panelGap),
+                                  Expanded(
+                                    flex: (116 * panelScale).round().clamp(
+                                      90,
+                                      186,
+                                    ),
+                                    child: _AllExamsPanel(
+                                      controller: controller,
+                                      fontScale: _settings.fontScale,
+                                    ),
+                                  ),
+                                  SizedBox(height: panelGap),
+                                  Expanded(
+                                    flex: (86 * panelScale).round().clamp(
+                                      68,
+                                      136,
+                                    ),
+                                    child: _ProgressPanel(
+                                      controller: controller,
+                                      fontScale: _settings.fontScale,
                                     ),
                                   ),
                                 ],
                               );
-                            }
-
-                            return Column(
-                              children: [
-                                Expanded(
-                                  flex: (108 * panelScale).round().clamp(82, 170),
-                                  child: _ClockPanel(
-                                    controller: controller,
-                                    fontScale: _settings.fontScale,
-                                  ),
-                                ),
-                                SizedBox(height: panelGap),
-                                Expanded(
-                                  flex: (94 * panelScale).round().clamp(78, 150),
-                                  child: _SubjectPanel(
-                                    controller: controller,
-                                    fontScale: _settings.fontScale,
-                                  ),
-                                ),
-                                SizedBox(height: panelGap),
-                                Expanded(
-                                  flex: (116 * panelScale).round().clamp(90, 186),
-                                  child: _AllExamsPanel(
-                                    controller: controller,
-                                    fontScale: _settings.fontScale,
-                                  ),
-                                ),
-                                SizedBox(height: panelGap),
-                                Expanded(
-                                  flex: (86 * panelScale).round().clamp(68, 136),
-                                  child: _ProgressPanel(
-                                    controller: controller,
-                                    fontScale: _settings.fontScale,
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
+                            },
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    ignoring: _activeReminder == null,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 420),
-                      reverseDuration: const Duration(milliseconds: 260),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) {
-                        final fade = CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOutCubic,
-                        );
-                        final scale = Tween<double>(
-                          begin: 0.985,
-                          end: 1.0,
-                        ).animate(fade);
-                        return FadeTransition(
-                          opacity: fade,
-                          child: ScaleTransition(scale: scale, child: child),
-                        );
-                      },
-                      child: _activeReminder == null
-                          ? const SizedBox.shrink(key: ValueKey('reminder_none'))
-                          : _ReminderOverlay(
-                              key: ValueKey<String>(
-                                '${_activeReminder!.title}|${_activeReminder!.subtitle}',
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: _activeReminder == null,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 420),
+                        reverseDuration: const Duration(milliseconds: 260),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) {
+                          final fade = CurvedAnimation(
+                            parent: animation,
+                            curve: Curves.easeOutCubic,
+                          );
+                          final scale = Tween<double>(
+                            begin: 0.985,
+                            end: 1.0,
+                          ).animate(fade);
+                          return FadeTransition(
+                            opacity: fade,
+                            child: ScaleTransition(scale: scale, child: child),
+                          );
+                        },
+                        child: _activeReminder == null
+                            ? const SizedBox.shrink(
+                                key: ValueKey('reminder_none'),
+                              )
+                            : _ReminderOverlay(
+                                key: ValueKey<String>(
+                                  '${_activeReminder!.title}|${_activeReminder!.subtitle}',
+                                ),
+                                payload: _activeReminder!,
                               ),
-                              payload: _activeReminder!,
-                            ),
+                      ),
                     ),
                   ),
-                ),
-                Positioned(
-                  right: 12,
-                  bottom: 12,
-                  child: AnimatedOpacity(
-                    duration: const Duration(milliseconds: 220),
-                    opacity: _overlayVisible ? 1 : 0,
-                    child: AnimatedSlide(
-                      duration: const Duration(milliseconds: 260),
-                      curve: Curves.easeOutCubic,
-                      offset: _overlayVisible
-                          ? Offset.zero
-                          : const Offset(0.0, 0.1),
-                      child: IgnorePointer(
-                        ignoring: !_overlayVisible,
-                        child: _ControlCapsules(
-                          holdProgress:
-                              _holdElapsed.inMilliseconds /
-                              _exitHoldTarget.inMilliseconds,
-                          settingsHoldProgress:
-                              _settingsHoldElapsed.inMilliseconds /
-                              _exitHoldTarget.inMilliseconds,
-                          onExitHoldStart: _startExitHold,
-                          onExitHoldCancel: _cancelExitHold,
-                          onSettingsHoldStart: _startSettingsHold,
-                          onSettingsHoldCancel: _cancelSettingsHold,
+                  Positioned(
+                    right: 12,
+                    bottom: 12,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 220),
+                      opacity: _overlayVisible ? 1 : 0,
+                      child: AnimatedSlide(
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutCubic,
+                        offset: _overlayVisible
+                            ? Offset.zero
+                            : const Offset(0.0, 0.1),
+                        child: IgnorePointer(
+                          ignoring: !_overlayVisible,
+                          child: _ControlCapsules(
+                            holdProgress:
+                                _holdElapsed.inMilliseconds /
+                                _exitHoldTarget.inMilliseconds,
+                            settingsHoldProgress:
+                                _settingsHoldElapsed.inMilliseconds /
+                                _exitHoldTarget.inMilliseconds,
+                            onExitHoldStart: _startExitHold,
+                            onExitHoldCancel: _cancelExitHold,
+                            onSettingsHoldStart: _startSettingsHold,
+                            onSettingsHoldCancel: _cancelSettingsHold,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
     );
   }
 }
@@ -928,88 +1077,94 @@ class _TopInfoBar extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        // Prefer the active exam message; fall back to the plan-level note.
         final examTitle = controller.examTitle;
         final planExamInfo = controller.exams
             .map((e) => e.message.trim())
-            .firstWhere((m) => m.isNotEmpty, orElse: () => _LiveMonitorPageState._defaultExamInfo);
+            .firstWhere(
+              (m) => m.isNotEmpty,
+              orElse: () => _LiveMonitorPageState._defaultExamInfo,
+            );
         final currentExamInfo =
             controller.activeExam?.message.trim().isNotEmpty == true
             ? controller.activeExam!.message.trim()
             : planExamInfo;
 
-    if (compact) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            examTitle,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontSize: (26 * fontScale).clamp(14, 40),
-              fontWeight: FontWeight.w800,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '考试信息: $currentExamInfo',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontSize: (18 * fontScale).clamp(11, 28),
-              fontWeight: FontWeight.w700,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '试室号: $roomLabel',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontSize: (18 * fontScale).clamp(11, 28),
-              fontWeight: FontWeight.w800,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      );
-    }
-
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
+        if (compact) {
+          // Compact mode stacks information vertically to preserve readability.
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 examTitle,
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontSize: (28 * fontScale).clamp(16, 44),
+                  fontSize: (26 * fontScale).clamp(14, 40),
                   fontWeight: FontWeight.w800,
                 ),
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+              const SizedBox(height: 4),
               Text(
                 '考试信息: $currentExamInfo',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontSize: (20 * fontScale).clamp(12, 32),
+                  fontSize: (18 * fontScale).clamp(11, 28),
                   fontWeight: FontWeight.w700,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '试室号: $roomLabel',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontSize: (18 * fontScale).clamp(11, 28),
+                  fontWeight: FontWeight.w800,
+                ),
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        Text(
-          '试室号: $roomLabel',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-            fontSize: (24 * fontScale).clamp(16, 40),
-            fontWeight: FontWeight.w800,
-          ),
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
-    );
+          );
+        }
+
+  // Wide mode uses a single row to keep the header short and balanced.
+        return Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    examTitle,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontSize: (28 * fontScale).clamp(16, 44),
+                      fontWeight: FontWeight.w800,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    '考试信息: $currentExamInfo',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontSize: (20 * fontScale).clamp(12, 32),
+                      fontWeight: FontWeight.w700,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              '试室号: $roomLabel',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontSize: (24 * fontScale).clamp(16, 40),
+                fontWeight: FontWeight.w800,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        );
       },
     );
   }
@@ -1026,32 +1181,34 @@ class _ClockPanel extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) => SurfaceCard(
-      style: SurfaceCardStyle.elevated,
-      padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final adaptive =
-              math.min(constraints.maxWidth, constraints.maxHeight) *
-              0.44 *
-              fontScale;
-          final fontSize = adaptive.clamp(34, 220).toDouble();
+        // The clock should dominate this panel, so padding scales with font size.
+        style: SurfaceCardStyle.elevated,
+        padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final adaptive =
+                math.min(constraints.maxWidth, constraints.maxHeight) *
+                0.44 *
+                fontScale;
+            // Clamp the clock so it remains readable on both tiny and huge screens.
+            final fontSize = adaptive.clamp(34, 220).toDouble();
 
-          return Center(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                controller.formatClock(),
-                style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                  fontSize: fontSize,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1,
+            return Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  controller.formatClock(),
+                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                  ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
-    ),
     );
   }
 }
@@ -1067,134 +1224,143 @@ class _SubjectPanel extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        // Red text highlights the near-end state without changing the layout.
         final isNearEnd = controller.isNearEnd;
         final scheme = Theme.of(context).colorScheme;
         final textColor = isNearEnd ? Colors.red : scheme.onSurface;
         final activeExam = controller.activeExam;
 
         return SurfaceCard(
-      style: isNearEnd ? SurfaceCardStyle.elevated : SurfaceCardStyle.filled,
-      padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final baseTitleSize =
-              (math.min(constraints.maxWidth, constraints.maxHeight) * 0.18)
-                  .clamp(26, 72)
-                  .toDouble();
-          final titleSize = baseTitleSize * fontScale;
-          final countdownSize = (titleSize * 0.7).clamp(22, 64).toDouble();
+          style: isNearEnd
+              ? SurfaceCardStyle.elevated
+              : SurfaceCardStyle.filled,
+          padding: EdgeInsets.all((20 * fontScale).clamp(12, 34).toDouble()),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Size the title from the panel itself instead of the whole screen.
+              final baseTitleSize =
+                  (math.min(constraints.maxWidth, constraints.maxHeight) * 0.18)
+                      .clamp(26, 72)
+                      .toDouble();
+              final titleSize = baseTitleSize * fontScale;
+              final countdownSize = (titleSize * 0.7).clamp(22, 64).toDouble();
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '当前科目',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontSize: (18 * fontScale).clamp(12, 30),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        controller.subjectLabel,
-                        textAlign: TextAlign.center,
-                        style:
-                            Theme.of(context).textTheme.displaySmall?.copyWith(
-                          fontSize: isNearEnd ? titleSize + 10 : titleSize,
-                          fontWeight: FontWeight.w900,
-                          color: textColor,
-                        ),
-                      ),
-                      // 显示材料列表
-                      if (activeExam != null && activeExam.materials.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: Column(
-                            children: [
-                              Container(
-                                width: 1.5,
-                                height: 16,
-                                color: scheme.outline.withValues(alpha: 0.3),
-                              ),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                alignment: WrapAlignment.center,
-                                spacing: 8,
-                                runSpacing: 6,
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '当前科目',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontSize: (18 * fontScale).clamp(12, 30),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            controller.subjectLabel,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.displaySmall
+                                ?.copyWith(
+                                  fontSize: isNearEnd
+                                      ? titleSize + 10
+                                      : titleSize,
+                                  fontWeight: FontWeight.w900,
+                                  color: textColor,
+                                ),
+                          ),
+                            // Show subject materials only when the current exam actually has them.
+                          if (activeExam != null &&
+                              activeExam.materials.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: Column(
                                 children: [
-                                  for (final material in activeExam.materials)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            scheme.primaryContainer
-                                                .withValues(alpha: 0.4),
-                                        borderRadius: AeternaTokens.radiusCompact,
-                                        border: Border.all(
-                                          color: scheme.primary
-                                              .withValues(alpha: 0.4),
-                                          width: 0.5,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        material.toDisplayString(),
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall
-                                            ?.copyWith(
-                                          fontSize: (11 * fontScale)
-                                              .clamp(7, 16),
-                                          color: scheme.onPrimaryContainer,
-                                        ),
-                                      ),
+                                  Container(
+                                    width: 1.5,
+                                    height: 16,
+                                    color: scheme.outline.withValues(
+                                      alpha: 0.3,
                                     ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    alignment: WrapAlignment.center,
+                                    spacing: 8,
+                                    runSpacing: 6,
+                                    children: [
+                                      for (final material
+                                          in activeExam.materials)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: scheme.primaryContainer
+                                                .withValues(alpha: 0.4),
+                                            borderRadius:
+                                                AeternaTokens.radiusCompact,
+                                            border: Border.all(
+                                              color: scheme.primary.withValues(
+                                                alpha: 0.4,
+                                              ),
+                                              width: 0.5,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            material.toDisplayString(),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                  fontSize: (11 * fontScale)
+                                                      .clamp(7, 16),
+                                                  color:
+                                                      scheme.onPrimaryContainer,
+                                                ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                                 ],
                               ),
-                            ],
-                          ),
-                        ),
-                    ],
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '倒计时',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontSize: (18 * fontScale).clamp(12, 30),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                controller.formatCountdown(),
-                style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                  fontSize: isNearEnd ? countdownSize + 8 : countdownSize,
-                  color: textColor,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+                  const SizedBox(height: 8),
+                  Text(
+                    '倒计时',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontSize: (18 * fontScale).clamp(12, 30),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    controller.formatCountdown(),
+                    style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                      fontSize: isNearEnd ? countdownSize + 8 : countdownSize,
+                      color: textColor,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
       },
     );
   }
 }
 
 class _AllExamsPanel extends StatelessWidget {
-  const _AllExamsPanel({
-    required this.controller,
-    required this.fontScale,
-  });
+  const _AllExamsPanel({required this.controller, required this.fontScale});
 
   final TimerController controller;
   final double fontScale;
@@ -1204,28 +1370,29 @@ class _AllExamsPanel extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) => SurfaceCard(
-      style: SurfaceCardStyle.filled,
-      padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '全部科目',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontSize: (20 * fontScale).clamp(12, 34),
+        // This panel acts as the stable list view for every exam in the plan.
+        style: SurfaceCardStyle.filled,
+        padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '全部科目',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontSize: (20 * fontScale).clamp(12, 34),
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: _AutoScrollExamList(
-              exams: controller.exams,
-              now: controller.now,
-              fontScale: fontScale,
+            const SizedBox(height: 10),
+            Expanded(
+              child: _AutoScrollExamList(
+                exams: controller.exams,
+                now: controller.now,
+                fontScale: fontScale,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
     );
   }
 }
@@ -1252,6 +1419,7 @@ class _AutoScrollExamListState extends State<_AutoScrollExamList> {
   @override
   void initState() {
     super.initState();
+    // Delay the first scroll step until the list has a valid layout.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _autoScrollLoop();
     });
@@ -1265,6 +1433,7 @@ class _AutoScrollExamListState extends State<_AutoScrollExamList> {
   }
 
   Future<void> _autoScrollLoop() async {
+    // Keep scrolling while the widget is alive and the controller is attached.
     while (mounted && _running) {
       await Future<void>.delayed(const Duration(milliseconds: 700));
       if (!mounted || !_scrollController.hasClients) {
@@ -1301,6 +1470,7 @@ class _AutoScrollExamListState extends State<_AutoScrollExamList> {
   @override
   Widget build(BuildContext context) {
     if (widget.exams.isEmpty) {
+      // Render a simple placeholder instead of an empty, confusing list.
       return Center(
         child: Text('暂无考试', style: Theme.of(context).textTheme.bodyMedium),
       );
@@ -1317,6 +1487,7 @@ class _AutoScrollExamListState extends State<_AutoScrollExamList> {
       itemBuilder: (context, index) {
         final exam = widget.exams[index];
         final state = exam.stateAt(widget.now);
+        // Use a stable text label and color for each timeline state.
         final stateText = switch (state) {
           ExamState.active => '进行中',
           ExamState.upcoming => '未开始',
@@ -1385,95 +1556,102 @@ class _ProgressPanel extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        // Progress changes depending on whether an exam is active or upcoming.
         final activeExam = controller.activeExam;
         final nextExam = controller.nextExam;
 
         return SurfaceCard(
-      style: SurfaceCardStyle.filled,
-      padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '进度',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontSize: (20 * fontScale).clamp(12, 34),
-            ),
+          style: SurfaceCardStyle.filled,
+          padding: EdgeInsets.all((16 * fontScale).clamp(10, 28).toDouble()),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '进度',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontSize: (20 * fontScale).clamp(12, 34),
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (activeExam != null)
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Show progress as a percent when the current exam is running.
+                      Text(
+                        '${(controller.progress * 100).toStringAsFixed(0)}%',
+                        style: Theme.of(context).textTheme.displaySmall
+                            ?.copyWith(
+                              fontSize: (52 * fontScale).clamp(24, 88),
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(
+                          AeternaTokens.superRadius,
+                        ),
+                        child: LinearProgressIndicator(
+                          minHeight: AeternaTokens.wideProgressHeight,
+                          value: controller.progress,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else if (nextExam != null)
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // If nothing is active yet, surface the next exam and its countdown.
+                        Text(
+                          '下一场: ${nextExam.subject}',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                fontSize: (20 * fontScale).clamp(12, 34),
+                              ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '开始倒计时 ${controller.formatCountdown()}',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                fontSize: (16 * fontScale).clamp(10, 24),
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Once every exam is done, replace the progress view with completion state.
+                        Icon(
+                          Icons.check_circle_outline,
+                          color: Theme.of(context).colorScheme.primary,
+                          size: (38 * fontScale).clamp(24, 54),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '今日考试已全部结束',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
-          const SizedBox(height: 10),
-          if (activeExam != null)
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    '${(controller.progress * 100).toStringAsFixed(0)}%',
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      fontSize: (52 * fontScale).clamp(24, 88),
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(
-                      AeternaTokens.superRadius,
-                    ),
-                    child: LinearProgressIndicator(
-                      minHeight: AeternaTokens.wideProgressHeight,
-                      value: controller.progress,
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else if (nextExam != null)
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '下一场: ${nextExam.subject}',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontSize: (20 * fontScale).clamp(12, 34),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '开始倒计时 ${controller.formatCountdown()}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: (16 * fontScale).clamp(10, 24),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: (38 * fontScale).clamp(24, 54),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '今日考试已全部结束',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
+        );
       },
     );
   }
@@ -1498,6 +1676,7 @@ class _ControlCapsules extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The two chips are intentionally symmetrical: exit and settings use the same hold model.
     return Wrap(
       spacing: 10,
       runSpacing: 8,
@@ -1542,6 +1721,7 @@ class _HoldCircleButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Size the chip from the available viewport so the control remains touchable everywhere.
     final shortest = math.min(
       MediaQuery.sizeOf(context).width,
       MediaQuery.sizeOf(context).height,
@@ -1551,6 +1731,7 @@ class _HoldCircleButton extends StatelessWidget {
     final p = progress.clamp(0, 1).toDouble();
 
     return Listener(
+      // Use low-level pointer events so the hold state starts immediately.
       onPointerDown: (_) => onHoldStart(),
       onPointerUp: (_) => onHoldCancel(),
       onPointerCancel: (_) => onHoldCancel(),
@@ -1560,70 +1741,73 @@ class _HoldCircleButton extends StatelessWidget {
         child: AnimatedScale(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutBack,
+          // Slightly shrink while active to make the long-press state obvious.
           scale: p > 0 ? 0.96 : 1.0,
           child: SizedBox(
-          width: 80,
-          height: 80,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Container(
-                width: 78,
-                height: 78,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: accentColor.withValues(alpha: p > 0 ? 0.35 : 0.12),
-                      blurRadius: p > 0 ? 16 : 8,
-                      spreadRadius: p > 0 ? 1 : 0,
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(
-                width: 78,
-                height: 78,
-                child: CircularProgressIndicator(
-                  value: 1,
-                  strokeWidth: 4,
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    accentColor.withValues(alpha: 0.2),
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: 78,
-                height: 78,
-                child: CircularProgressIndicator(
-                  value: p,
-                  strokeWidth: 4,
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(accentColor),
-                ),
-              ),
-              Tooltip(
-                message: tooltip,
-                child: Container(
-                  width: 60,
-                  height: 60,
+            width: 80,
+            height: 80,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 78,
+                  height: 78,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: scheme.primaryContainer,
-                    border: Border.all(
-                      color: accentColor.withValues(alpha: 0.6),
-                      width: 1.6,
+                    boxShadow: [
+                      BoxShadow(
+                        color: accentColor.withValues(
+                          alpha: p > 0 ? 0.35 : 0.12,
+                        ),
+                        blurRadius: p > 0 ? 16 : 8,
+                        spreadRadius: p > 0 ? 1 : 0,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  width: 78,
+                  height: 78,
+                  child: CircularProgressIndicator(
+                    value: 1,
+                    strokeWidth: 4,
+                    backgroundColor: Colors.transparent,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      accentColor.withValues(alpha: 0.2),
                     ),
                   ),
-                  child: Icon(icon, size: iconSize),
                 ),
-              ),
-            ],
+                SizedBox(
+                  width: 78,
+                  height: 78,
+                  child: CircularProgressIndicator(
+                    value: p,
+                    strokeWidth: 4,
+                    backgroundColor: Colors.transparent,
+                    valueColor: AlwaysStoppedAnimation<Color>(accentColor),
+                  ),
+                ),
+                Tooltip(
+                  message: tooltip,
+                  child: Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: scheme.primaryContainer,
+                      border: Border.all(
+                        color: accentColor.withValues(alpha: 0.6),
+                        width: 1.6,
+                      ),
+                    ),
+                    child: Icon(icon, size: iconSize),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
-    ),
     );
   }
 }
@@ -1647,11 +1831,16 @@ class _ReminderOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Dim the underlying page so reminder cards become the visual focus.
     return Container(
       color: Colors.black.withValues(alpha: 0.82),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final shortest = math.min(constraints.maxWidth, constraints.maxHeight);
+          // Scale reminder typography relative to the current viewport.
+          final shortest = math.min(
+            constraints.maxWidth,
+            constraints.maxHeight,
+          );
           final iconSize = (shortest * 0.16).clamp(52.0, 120.0).toDouble();
           final titleSize = (shortest * 0.09).clamp(28.0, 72.0).toDouble();
           final subtitleSize = (shortest * 0.055).clamp(18.0, 42.0).toDouble();
@@ -1664,6 +1853,7 @@ class _ReminderOverlay extends StatelessWidget {
                 duration: const Duration(milliseconds: 650),
                 curve: Curves.easeOutBack,
                 builder: (context, scale, child) {
+                  // Use a small entrance pop so the reminder feels intentional.
                   return Transform.scale(scale: scale, child: child);
                 },
                 child: Column(
@@ -1680,11 +1870,12 @@ class _ReminderOverlay extends StatelessWidget {
                       textAlign: TextAlign.center,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                        color: Colors.white,
-                        fontSize: titleSize,
-                        fontWeight: FontWeight.w900,
-                      ),
+                      style: Theme.of(context).textTheme.displayMedium
+                          ?.copyWith(
+                            color: Colors.white,
+                            fontSize: titleSize,
+                            fontWeight: FontWeight.w900,
+                          ),
                     ),
                     SizedBox(height: (shortest * 0.02).clamp(8.0, 18.0)),
                     Text(
@@ -1692,11 +1883,12 @@ class _ReminderOverlay extends StatelessWidget {
                       textAlign: TextAlign.center,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: payload.color,
-                        fontSize: subtitleSize,
-                        fontWeight: FontWeight.w800,
-                      ),
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(
+                            color: payload.color,
+                            fontSize: subtitleSize,
+                            fontWeight: FontWeight.w800,
+                          ),
                     ),
                   ],
                 ),

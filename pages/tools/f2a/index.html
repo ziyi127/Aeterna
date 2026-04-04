@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aeterna 2FA 验证器</title>
+    <style>
+      :root {
+        --bg: #f3f7f3;
+        --bg-2: #edf3f7;
+        --ink: #101b1f;
+        --muted: #54656b;
+        --line: #d6e2e5;
+        --line-strong: #bfd1d7;
+        --primary: #1d7a62;
+        --accent: #0f5c87;
+        --surface: rgba(255, 255, 255, 0.84);
+        --surface-solid: #ffffff;
+        --shadow: 0 18px 40px rgba(18, 44, 53, 0.08);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1100px 620px at -12% -18%, #d5efe5 0%, transparent 58%),
+          radial-gradient(1000px 560px at 112% -18%, #d9e5fb 0%, transparent 54%),
+          linear-gradient(142deg, var(--bg), var(--bg-2));
+      }
+      .container {
+        width: min(1120px, calc(100vw - clamp(20px, 4vw, 56px)));
+        margin: 0 auto;
+      }
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(12px);
+        background: rgba(243, 247, 243, 0.72);
+        border-bottom: 1px solid rgba(214, 226, 229, 0.72);
+      }
+      .topbar-inner {
+        padding: 14px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 18px;
+      }
+      .brand-wrap {
+        display: inline-flex;
+        align-items: center;
+        min-width: 0;
+        gap: 10px;
+      }
+      .logo-mark {
+        position: relative;
+        width: 34px;
+        height: 34px;
+        border-radius: 13px;
+        border: 2px solid var(--primary);
+        background: linear-gradient(180deg, rgba(29, 122, 98, 0.08), rgba(15, 92, 135, 0.04));
+        box-shadow: inset 0 0 0 1px rgba(29, 122, 98, 0.08);
+        flex: 0 0 auto;
+      }
+      .logo-mark::after {
+        content: '';
+        position: absolute;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        right: 5px;
+        top: 5px;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.78);
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+      }
+      nav {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      nav a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 14px;
+      }
+      nav a:hover {
+        color: var(--ink);
+      }
+      .hero-wrap {
+        padding: 28px 0 16px;
+      }
+      .hero-shell {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 18px;
+        align-items: stretch;
+      }
+      .hero-main,
+      .hero-side,
+      .section-card,
+      .entry-card,
+      .factor-card,
+      .resource-card {
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+      }
+      .hero-main,
+      .hero-side,
+      .section-card {
+        padding: 24px;
+      }
+      .hero-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .hero-brand-text {
+        display: grid;
+        gap: 4px;
+      }
+      .hero-brand-text strong {
+        font-size: 18px;
+        letter-spacing: 0.02em;
+      }
+      .hero-brand-text span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(29, 122, 98, 0.12);
+        color: #1d6d58;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .eyebrow-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+      }
+      h1 {
+        margin: 16px 0 0;
+        font-size: clamp(34px, 4.8vw, 58px);
+        line-height: 1.03;
+        letter-spacing: -0.02em;
+      }
+      .hero-copy,
+      .section-desc {
+        margin-top: 16px;
+        color: var(--muted);
+        line-height: 1.75;
+      }
+      .cta-row {
+        margin-top: 18px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 10px 18px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        color: var(--ink);
+        background: var(--surface-solid);
+        transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        border-color: var(--line-strong);
+        box-shadow: 0 10px 24px rgba(20, 45, 54, 0.12);
+      }
+      .btn.primary {
+        border: none;
+        color: #fff;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+      }
+      .pill-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+      .pill {
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .stats {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .stat {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.9);
+      }
+      .stat strong {
+        display: block;
+        font-size: 20px;
+      }
+      .stat span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+      .hero-side {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+      .side-title {
+        margin: 0;
+        font-size: 20px;
+      }
+      .step-grid,
+      .entry-grid,
+      .factor-grid,
+      .resource-grid {
+        display: grid;
+        gap: 12px;
+      }
+      .step-grid,
+      .entry-grid,
+      .resource-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .step-card,
+      .entry-card,
+      .factor-card,
+      .resource-card {
+        padding: 18px;
+        background: rgba(255, 255, 255, 0.9);
+      }
+      .step-index {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        background: rgba(15, 92, 135, 0.12);
+        color: #0f5c87;
+        font-weight: 700;
+        margin-bottom: 12px;
+      }
+      .step-card h3,
+      .entry-card h3,
+      .factor-card h3,
+      .resource-card h3 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+      .step-card p,
+      .entry-card p,
+      .factor-card p,
+      .resource-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.66;
+      }
+      .section-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      .section-head h2 {
+        margin: 0;
+        font-size: 24px;
+      }
+      .section-head p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .qr-card {
+        margin-top: 14px;
+        padding: 14px;
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.94);
+      }
+      .qr-frame {
+        display: inline-flex;
+        padding: 10px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        background: #fff;
+      }
+      .status-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .status-pill {
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        border: 1px solid var(--line);
+        background: #eff5f2;
+        color: #244f37;
+      }
+      .list {
+        margin-top: 14px;
+        display: grid;
+        gap: 10px;
+      }
+      .factor-card {
+        position: relative;
+        overflow: hidden;
+      }
+      .factor-code {
+        margin-top: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        letter-spacing: 2px;
+        font-size: clamp(26px, 7vw, 32px);
+        color: var(--accent);
+      }
+      .meta {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      button {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        border-radius: 10px;
+        padding: 8px 12px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: #fff;
+        border-color: transparent;
+      }
+      dialog {
+        border: none;
+        border-radius: 18px;
+        width: min(92vw, 460px);
+        padding: 0;
+        box-shadow: var(--shadow);
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.44);
+      }
+      .dialog-body {
+        padding: 18px;
+      }
+      input {
+        width: 100%;
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 14px;
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      footer {
+        padding: 20px 0 30px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      @media (max-width: 1200px) {
+        .hero-shell {
+          grid-template-columns: 1fr;
+        }
+        .hero-main,
+        .hero-side,
+        .section-card {
+          padding: 22px;
+        }
+      }
+      @media (max-width: 920px) {
+        .hero-shell,
+        .step-grid,
+        .entry-grid,
+        .resource-grid,
+        .stats {
+          grid-template-columns: 1fr;
+        }
+        .topbar {
+          position: static;
+        }
+        .section-head {
+          align-items: start;
+          flex-direction: column;
+        }
+      }
+      @media (max-width: 760px) {
+        .topbar-inner {
+          gap: 10px;
+          align-items: stretch;
+        }
+        .brand-wrap {
+          width: 100%;
+        }
+        nav {
+          width: 100%;
+          gap: 10px;
+          justify-content: flex-start;
+        }
+        h1 {
+          font-size: clamp(30px, 10vw, 42px);
+          line-height: 1.08;
+        }
+        .hero-main,
+        .hero-side,
+        .section-card,
+        .step-card,
+        .entry-card,
+        .factor-card,
+        .resource-card,
+        .qr-card {
+          padding: 16px;
+        }
+        .btn,
+        button {
+          min-height: 42px;
+        }
+      }
+      @media (max-width: 480px) {
+        .container {
+          width: calc(100vw - 20px);
+        }
+        .actions {
+          flex-direction: column;
+        }
+        .actions button {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container topbar-inner">
+        <div class="brand-wrap">
+          <div class="logo-mark" aria-hidden="true"></div>
+          <div class="brand">
+            <strong>Aeterna</strong>
+          </div>
+          <span style="color: var(--muted)">2FA 工具</span>
+        </div>
+        <nav>
+          <a href="../../">官网首页</a>
+          <a href="#codes">验证码</a>
+          <a href="#bind">绑定</a>
+          <a href="#resources">资源</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container hero-wrap">
+      <div class="hero-shell">
+        <section class="hero-main">
+          <div class="hero-brand">
+            <div class="logo-mark" aria-hidden="true"></div>
+            <div class="hero-brand-text">
+              <strong>Aeterna 2FA</strong>
+              <span>浏览器内保存密钥并生成验证码</span>
+            </div>
+          </div>
+          <div class="eyebrow"><span class="eyebrow-dot"></span>浏览器内本地验证</div>
+          <h1>扫码绑定密钥，<br />在浏览器内生成验证码。</h1>
+          <p class="hero-copy">
+            这是 Aeterna 官网的 2FA 子入口。扫码后密钥保存在当前浏览器 Cookie 中，可用于桌面端退出保护，并兼容第三方标准 TOTP 验证器。
+          </p>
+          <div class="cta-row">
+            <a class="btn primary" href="#bind">开始使用</a>
+            <a class="btn" href="../../">返回官网</a>
+          </div>
+          <div class="stats">
+            <div class="stat">
+              <strong>标准 TOTP</strong>
+              <span>支持第三方验证器与网页绑定</span>
+            </div>
+            <div class="stat">
+              <strong>30 秒刷新</strong>
+              <span>验证码按 30 秒轮换</span>
+            </div>
+            <div class="stat">
+              <strong>本地保存</strong>
+              <span>密钥保存在浏览器 Cookie 中</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="hero-side" id="bind">
+          <h2 class="side-title">操作步骤</h2>
+          <div class="step-grid">
+            <article class="step-card">
+              <div class="step-index">1</div>
+              <h3>扫码</h3>
+              <p>用手机或验证器扫描桌面端生成的二维码。</p>
+            </article>
+            <article class="step-card">
+              <div class="step-index">2</div>
+              <h3>命名</h3>
+              <p>首次保存时为设备设置名称。</p>
+            </article>
+            <article class="step-card">
+              <div class="step-index">3</div>
+              <h3>验证</h3>
+              <p>回填网页密钥或验证码，完成绑定。</p>
+            </article>
+          </div>
+          <div class="pill-row">
+            <span class="pill">网页绑定</span>
+            <span class="pill">支持第三方验证器</span>
+            <span class="pill">Cookie 本地存储</span>
+          </div>
+        </aside>
+      </div>
+
+      <section class="section-card" id="codes" style="margin-top: 18px">
+        <div class="section-head">
+          <div>
+            <h2>当前密钥与验证码</h2>
+            <p>扫描后显示绑定状态和验证码。</p>
+          </div>
+        </div>
+        <div class="qr-card" id="incoming-card" style="display:none">
+          <div class="status-row">
+            <span class="status-pill">本次绑定密钥</span>
+            <span class="status-pill" id="status-pill">等待扫码数据</span>
+          </div>
+          <p style="margin-top: 10px">保存后请将当前 6 位验证码回填到桌面端。</p>
+          <div style="margin-top: 12px; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; color: var(--accent);" id="incoming-secret">--</div>
+          <div class="meta" id="incoming-secret-meta"></div>
+          <div class="cta-row" style="margin-top: 12px">
+            <button id="copy-secret-btn" class="primary">复制当前 6 位码</button>
+          </div>
+        </div>
+        <div class="status-row" style="margin-top: 14px">
+          <span class="status-pill" id="countdown-pill">剩余 30 秒</span>
+          <span class="status-pill" id="local-state-pill">等待扫码数据</span>
+        </div>
+        <div class="cta-row" style="margin-top: 12px">
+          <button id="clear-btn">清空所有密钥</button>
+        </div>
+        <div class="list" id="factor-list"></div>
+      </section>
+
+      <section class="section-card" id="resources" style="margin-top: 18px">
+        <div class="section-head">
+          <div>
+            <h2>资源与说明</h2>
+            <p>放置绑定和使用说明。</p>
+          </div>
+        </div>
+        <div class="resource-grid">
+          <article class="resource-card">
+            <h3>桌面端跳转</h3>
+            <p>桌面端设置页会跳转到此页，并携带密钥参数。</p>
+          </article>
+          <article class="resource-card">
+            <h3>兼容标准 TOTP</h3>
+            <p>第三方验证器可以读取 otpauth 形式的标准配置。</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="name-dialog">
+      <div class="dialog-body">
+        <h3 style="margin: 0">设置设备名称</h3>
+        <p style="margin-top: 6px; color: var(--muted)">首次读取密钥后，请设置名称并保存到 Cookie。</p>
+        <input id="name-input" placeholder="例如：值班老师手机" maxlength="30" />
+        <div class="actions">
+          <button id="name-cancel">取消</button>
+          <button id="name-confirm" class="primary">保存</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script>
+      const COOKIE_KEY = 'aeterna_2fa_keys';
+      const LEGACY_COOKIE_KEY = 'aeterna_f2a_keys';
+      const NAME_DIALOG = document.getElementById('name-dialog');
+      const NAME_INPUT = document.getElementById('name-input');
+      const INCOMING_CARD = document.getElementById('incoming-card');
+      const INCOMING_SECRET = document.getElementById('incoming-secret');
+      const INCOMING_SECRET_META = document.getElementById('incoming-secret-meta');
+      const COPY_SECRET_BTN = document.getElementById('copy-secret-btn');
+      const STATUS_PILL = document.getElementById('status-pill');
+      const LOCAL_STATE_PILL = document.getElementById('local-state-pill');
+      const COUNTDOWN_PILL = document.getElementById('countdown-pill');
+      const LIST_EL = document.getElementById('factor-list');
+      const CLEAR_BTN = document.getElementById('clear-btn');
+
+      let factors = loadFactors();
+      let incomingSecret = '';
+      let incomingName = '';
+
+      function setCookie(name, value, days) {
+        const expires = new Date(Date.now() + days * 86400000).toUTCString();
+        document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+      }
+
+      function getCookie(name) {
+        const prefix = `${name}=`;
+        const parts = document.cookie.split(';');
+        for (const raw of parts) {
+          const part = raw.trim();
+          if (part.startsWith(prefix)) {
+            return decodeURIComponent(part.substring(prefix.length));
+          }
+        }
+        return '';
+      }
+
+      function loadFactors() {
+        try {
+          const raw = getCookie(COOKIE_KEY) || getCookie(LEGACY_COOKIE_KEY);
+          if (!raw) return [];
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          return parsed.filter((x) => x && typeof x.id === 'string' && typeof x.secret === 'string');
+        } catch (_) {
+          return [];
+        }
+      }
+
+      function saveFactors() {
+        setCookie(COOKIE_KEY, JSON.stringify(factors), 3650);
+      }
+
+      function setIncomingSecret(secret, name) {
+        incomingSecret = normalizeSecret(secret);
+        incomingName = (name || '').trim();
+        if (!incomingSecret) {
+          INCOMING_CARD.style.display = 'none';
+          return;
+        }
+        INCOMING_CARD.style.display = 'block';
+        INCOMING_SECRET.textContent = incomingSecret;
+        INCOMING_SECRET_META.textContent = incomingName
+          ? `建议名称: ${incomingName}`
+          : '建议名称会在首次保存时设置并写入 Cookie。';
+      }
+
+      function normalizeSecret(secret) {
+        return (secret || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+      }
+
+      function isValidSecret(secret) {
+        return /^[A-Z2-7]{16,}$/.test(normalizeSecret(secret));
+      }
+
+      function base32Decode(input) {
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+        const cleaned = (input || '').replace(/=/g, '');
+        let bits = 0;
+        let value = 0;
+        const out = [];
+        for (const ch of cleaned) {
+          const idx = alphabet.indexOf(ch);
+          if (idx < 0) continue;
+          value = (value << 5) | idx;
+          bits += 5;
+          if (bits >= 8) {
+            out.push((value >> (bits - 8)) & 0xff);
+            bits -= 8;
+          }
+        }
+        return new Uint8Array(out);
+      }
+
+      async function totp(secret, timeMs = Date.now(), digits = 6, period = 30) {
+        const keyData = base32Decode(normalizeSecret(secret));
+        const counter = Math.floor(timeMs / 1000 / period);
+        const view = new DataView(new ArrayBuffer(8));
+        view.setUint32(0, Math.floor(counter / 0x100000000));
+        view.setUint32(4, counter >>> 0);
+
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          keyData,
+          { name: 'HMAC', hash: 'SHA-1' },
+          false,
+          ['sign']
+        );
+        const signature = new Uint8Array(
+          await crypto.subtle.sign('HMAC', cryptoKey, view.buffer)
+        );
+        const offset = signature[signature.length - 1] & 0x0f;
+        const binary =
+          ((signature[offset] & 0x7f) << 24) |
+          ((signature[offset + 1] & 0xff) << 16) |
+          ((signature[offset + 2] & 0xff) << 8) |
+          (signature[offset + 3] & 0xff);
+        const mod = 10 ** digits;
+        const otp = binary % mod;
+        return String(otp).padStart(digits, '0');
+      }
+
+      function parseIncoming() {
+        const url = new URL(window.location.href);
+        const secret = normalizeSecret(url.searchParams.get('secret') || '');
+        const name = (url.searchParams.get('name') || '').trim();
+        setIncomingSecret(secret, name);
+        if (!secret || !isValidSecret(secret)) {
+          STATUS_PILL.textContent = '等待扫码数据';
+          LOCAL_STATE_PILL.textContent = '等待扫码数据';
+          return;
+        }
+
+        const existing = factors.find((x) => x.id === secret);
+        const now = Date.now();
+        if (existing) {
+          existing.secret = secret;
+          existing.updatedAt = now;
+          saveFactors();
+          STATUS_PILL.textContent = `已更新密钥：${existing.name || secret.slice(0, 6)}`;
+          LOCAL_STATE_PILL.textContent = '密钥已更新';
+          return;
+        }
+
+        NAME_INPUT.value = name || '';
+        NAME_DIALOG.showModal();
+
+        const onConfirm = () => {
+          const deviceName = (NAME_INPUT.value || '').trim() || `设备${factors.length + 1}`;
+          factors.push({ id: secret, name: deviceName, secret, createdAt: now });
+          saveFactors();
+          STATUS_PILL.textContent = `已添加密钥：${deviceName}`;
+          LOCAL_STATE_PILL.textContent = '已完成保存';
+          NAME_DIALOG.close();
+          NAME_DIALOG.removeEventListener('close', onClose);
+          render();
+        };
+
+        const onClose = () => {
+          document.getElementById('name-confirm').onclick = null;
+          document.getElementById('name-cancel').onclick = null;
+          if (!factors.find((x) => x.id === secret)) {
+            STATUS_PILL.textContent = '已取消保存新密钥';
+            LOCAL_STATE_PILL.textContent = '未保存';
+          }
+        };
+
+        document.getElementById('name-confirm').onclick = onConfirm;
+        document.getElementById('name-cancel').onclick = () => NAME_DIALOG.close();
+        NAME_DIALOG.addEventListener('close', onClose);
+      }
+
+      async function render() {
+        LIST_EL.innerHTML = '';
+        if (!factors.length) {
+          const empty = document.createElement('p');
+          empty.textContent = '当前没有保存的 2FA 密钥，请先从电脑端扫码绑定。';
+          LIST_EL.appendChild(empty);
+          return;
+        }
+
+        const now = Date.now();
+        const remain = 30 - (Math.floor(now / 1000) % 30);
+        COUNTDOWN_PILL.textContent = `剩余 ${remain} 秒`;
+
+        for (const factor of factors) {
+          const item = document.createElement('div');
+          item.className = 'factor-card';
+          const code = await totp(factor.secret, now);
+          const masked = `${factor.secret.slice(0, 4)}***${factor.secret.slice(-4)}`;
+          item.innerHTML = `
+            <div class="status-row" style="justify-content: space-between; align-items: flex-start;">
+              <div>
+                <div style="font-size: 16px; font-weight: 800;">${escapeHtml(factor.name || '未命名设备')}</div>
+                <div class="meta">密钥: ${escapeHtml(masked)}</div>
+              </div>
+              <button data-remove="${escapeHtml(factor.id)}">删除</button>
+            </div>
+            <div class="factor-code">${code}</div>
+            <div class="meta">每 30 秒刷新一次</div>
+          `;
+          LIST_EL.appendChild(item);
+        }
+
+        LIST_EL.querySelectorAll('[data-remove]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-remove');
+            const confirmed = window.confirm('删除后无法恢复，确定要删除该 2FA 密钥吗？');
+            if (!confirmed) {
+              return;
+            }
+            factors = factors.filter((x) => x.id !== id);
+            saveFactors();
+            render();
+          });
+        });
+      }
+
+      function escapeHtml(str) {
+        return (str || '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      CLEAR_BTN.addEventListener('click', () => {
+        const confirmed = window.confirm('清空后无法恢复，确定要删除所有 2FA 密钥吗？');
+        if (!confirmed) {
+          return;
+        }
+        factors = [];
+        saveFactors();
+        STATUS_PILL.textContent = '已清空所有密钥';
+        LOCAL_STATE_PILL.textContent = '已清空';
+        render();
+      });
+
+      COPY_SECRET_BTN.addEventListener('click', async () => {
+        if (!incomingSecret) {
+          return;
+        }
+        try {
+          const code = await totp(incomingSecret, Date.now());
+          await navigator.clipboard.writeText(code);
+          STATUS_PILL.textContent = '6 位验证码已复制到剪贴板';
+        } catch (_) {
+          STATUS_PILL.textContent = '复制失败，请手动读取验证码';
+        }
+      });
+
+      parseIncoming();
+      render();
+      setInterval(render, 1000);
+    </script>
+  </body>
+</html>

@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ExamPlanConfig {
+  // This model is the persisted representation of the current exam plan.
   const ExamPlanConfig({
     required this.examTitle,
     required this.startDate,
@@ -21,6 +22,7 @@ class ExamPlanConfig {
   final List<ExamSlot> exams;
 
   Map<String, dynamic> toJson() {
+    // Serialize dates in date-only form so plans stay stable across time zones.
     return {
       'examTitle': examTitle,
       'startDate': _dateOnly(startDate).toIso8601String(),
@@ -41,6 +43,7 @@ class ExamPlanConfig {
   }
 
   static ExamPlanConfig fromJson(Map<String, dynamic> json) {
+    // Rebuild exams from plain JSON while tolerating missing optional fields.
     final examsRaw = (json['exams'] as List?) ?? const [];
     final exams = examsRaw
         .map(
@@ -108,6 +111,7 @@ class ExamPlanConfig {
 }
 
 class DisplaySettings {
+  // Display settings hold all UI-facing preferences for the launcher and monitor.
   const DisplaySettings({
     required this.fontScale,
     required this.roomLabel,
@@ -144,6 +148,7 @@ class DisplaySettings {
     bool? f2aEnabled,
     List<TwoFactorEntry>? f2aFactors,
   }) {
+    // Keep old values by default so callers only override the fields they touched.
     return DisplaySettings(
       fontScale: fontScale ?? this.fontScale,
       roomLabel: roomLabel ?? this.roomLabel,
@@ -159,6 +164,7 @@ class DisplaySettings {
   }
 
   Map<String, dynamic> toJson() {
+    // Legacy keys are preserved so older builds can still read the data.
     return {
       'fontScale': fontScale,
       'roomLabel': roomLabel,
@@ -174,6 +180,7 @@ class DisplaySettings {
   }
 
   static DisplaySettings fromJson(Map<String, dynamic> json) {
+    // Accept both legacy and current keys when rebuilding the settings object.
     final factorsRaw = (json['f2aFactors'] as List?) ?? const [];
     return DisplaySettings(
       fontScale: (json['fontScale'] as num?)?.toDouble() ?? 1.0,
@@ -200,6 +207,7 @@ class DisplaySettings {
 }
 
 class TwoFactorEntry {
+  // One entry represents one bound TOTP secret.
   const TwoFactorEntry({
     required this.id,
     required this.name,
@@ -218,6 +226,7 @@ class TwoFactorEntry {
     String? secret,
     int? createdAtMs,
   }) {
+    // Copy helpers make it easy to update only one field without rebuilding everything.
     return TwoFactorEntry(
       id: id ?? this.id,
       name: name ?? this.name,
@@ -227,6 +236,7 @@ class TwoFactorEntry {
   }
 
   Map<String, dynamic> toJson() {
+    // Persist every field so the QR enrollment and verification states survive restarts.
     return {
       'id': id,
       'name': name,
@@ -236,6 +246,7 @@ class TwoFactorEntry {
   }
 
   static TwoFactorEntry fromJson(Map<String, dynamic> json) {
+    // Recover gracefully if any field is missing from old save files.
     return TwoFactorEntry(
       id: (json['id'] as String?)?.trim().isNotEmpty == true
           ? (json['id'] as String).trim()
@@ -252,6 +263,7 @@ class TwoFactorEntry {
 }
 
 class SyncSettings {
+  // Sync settings describe how the controller should source time.
   const SyncSettings({
     required this.ntpServers,
     required this.modeKey,
@@ -269,6 +281,7 @@ class SyncSettings {
   TimeSourceMode get mode => TimeSourceModeLabel.fromKey(modeKey);
 
   Map<String, dynamic> toJson() {
+    // Save the sync configuration in a controller-friendly shape.
     return {
       'ntpServers': ntpServers,
       'modeKey': modeKey,
@@ -279,6 +292,7 @@ class SyncSettings {
   }
 
   static SyncSettings fromJson(Map<String, dynamic> json) {
+    // Accept the legacy single-address field so older data keeps working.
     final serversRaw = (json['ntpServers'] as List?)?.whereType<String>().toList() ??
         <String>[];
     final legacyAddress = (json['ntpAddress'] as String?)?.trim() ?? '';
@@ -304,6 +318,7 @@ class SyncSettings {
 }
 
 class ConfigManager {
+  // Shared key names keep all persistence reads and writes consistent.
   static const String _examsKey = 'aeterna_exams';
   static const String _displaySettingsKey = 'aeterna_display_settings';
   static const String _planKey = 'aeterna_exam_plan';
@@ -311,10 +326,12 @@ class ConfigManager {
   static const String _welcomeShownKey = 'aeterna_welcome_shown';
 
   static bool looksLikePasswordHash(String value) {
+    // Password hashes are stored as lowercase SHA-256 hex strings.
     return RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(value);
   }
 
   static String hashPassword(String password) {
+    // Hash the password before persisting it anywhere.
     return sha256.convert(utf8.encode(password)).toString();
   }
 

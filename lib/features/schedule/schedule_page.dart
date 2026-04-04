@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 enum _DateMode { singleDay, multiDay }
 
 class SchedulePage extends StatefulWidget {
+  // The schedule page edits the live exam plan through the shared controller.
   const SchedulePage({super.key});
 
   @override
@@ -19,6 +20,7 @@ class SchedulePage extends StatefulWidget {
 }
 
 class _SchedulePageState extends State<SchedulePage> {
+  // The default note is used when the user leaves the message field empty.
   static const String _defaultExamInfo = '认真考试，仔细检查';
   bool _editMode = true;
   bool _seededMeta = false;
@@ -34,6 +36,7 @@ class _SchedulePageState extends State<SchedulePage> {
   @override
   void initState() {
     super.initState();
+    // Initialize input controllers before the first render seeds values into them.
     _selectedDate = DateTime.now();
     _examTitleController = TextEditingController();
     _messageController = TextEditingController();
@@ -48,6 +51,7 @@ class _SchedulePageState extends State<SchedulePage> {
 
   @override
   Widget build(BuildContext context) {
+    // The page stays synchronized with the shared timer controller.
     final controller = TimerScope.of(context);
     final width = MediaQuery.sizeOf(context).width;
 
@@ -128,6 +132,7 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 
   void _seedFromController(TimerController controller) {
+    // Seed only once so manual edits are not overwritten on rebuilds.
     if (_seededMeta) {
       return;
     }
@@ -158,6 +163,7 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 
   Widget _buildExamList(BuildContext context, TimerController controller) {
+    // Filter the plan down to the currently selected day.
     final width = MediaQuery.sizeOf(context).width;
     final selectedDateOnly = _dateOnly(_selectedDate);
 
@@ -213,6 +219,7 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 
   Future<void> _pickRangeDate({required bool isStart}) async {
+    // Keep the date range valid even if the user picks the endpoints in reverse.
     final now = DateTime.now();
     final initial = isStart
         ? (_rangeStart ?? _dateOnly(now))
@@ -249,6 +256,7 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 
   Future<void> _pickSelectedDate() async {
+    // The focused day must stay within the active range.
     final now = DateTime.now();
     final start = _rangeStart ?? _dateOnly(now);
     final end = _rangeEnd ?? start;
@@ -265,6 +273,7 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 
   void _saveMeta(TimerController controller) {
+    // Write the edited plan metadata back into the shared controller.
     final title = _examTitleController.text.trim();
     final message = _messageController.text.trim();
     final now = DateTime.now();
@@ -292,6 +301,7 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 
   Future<void> _exportToFile(TimerController controller) async {
+    // Export the current plan as a portable JSON file.
     final json = ConfigManager.exportToJson(
       controller.exams,
       examTitle: controller.examTitle,
@@ -344,6 +354,7 @@ class _SchedulePageState extends State<SchedulePage> {
     TimerController controller, {
     bool examAwareOnly = false,
   }) async {
+    // Import should replace the current plan only after the file validates.
     try {
       final file = await openFile(
         acceptedTypeGroups: [

@@ -19,6 +19,7 @@ enum _ExitProtectionMode { none, localPassword, twoFactor }
 enum _TwoFactorEnrollmentMode { webPage, authenticatorApp }
 
 class SettingsPage extends StatefulWidget {
+  // The settings page owns theme, sync, display, and exit-protection state.
   const SettingsPage({
     super.key,
     required this.currentThemeMode,
@@ -39,6 +40,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  // Controllers keep the text fields in sync with persisted values.
   late final TextEditingController _ntpController;
   late final TextEditingController _roomController;
   bool _seededFromState = false;
@@ -75,6 +77,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    // Create the controllers before loading data into them.
     _ntpController = TextEditingController();
     _roomController = TextEditingController();
     _themeMode = widget.currentThemeMode;
@@ -102,6 +105,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Seed the view model once after the surrounding TimerScope is ready.
     if (_seededFromState) {
       return;
     }
@@ -126,6 +130,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _scheduleAutoSave(FutureOr<void> Function() action) {
+    // Debounce rapid edits so storage is not hammered on every keystroke.
     _autoSaveDebounce?.cancel();
     _autoSaveDebounce = Timer(const Duration(milliseconds: 480), () {
       unawaited(Future<void>.value(action()));
@@ -133,6 +138,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadDisplaySettings() async {
+    // Load display settings and protection settings together.
     final settings = await ConfigManager.loadDisplaySettings();
     if (!mounted) {
       return;
@@ -199,6 +205,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   _ExitProtectionMode get _exitProtectionMode {
+    // Two-factor protection overrides the local password mode.
     if (_twoFactorEnabled) {
       return _ExitProtectionMode.twoFactor;
     }
@@ -209,6 +216,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _setExitProtectionMode(_ExitProtectionMode mode) async {
+    // Changing protection mode may require enrolling or clearing credentials.
     if (!mounted) {
       return;
     }
@@ -257,6 +265,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   bool get _displayDirty {
+    // Compare the form state against the original snapshot.
     return _roomController.text.trim() != _initialRoom ||
         (_fontScale - _initialFontScale).abs() > 0.0001 ||
         _themeMode != _initialThemeMode ||
@@ -277,6 +286,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _hasUnsavedChanges() => _displayDirty || _syncDirty;
 
   bool _canSaveAll(TimerController controller) {
+    // Save actions are disabled while another async operation is already running.
     return _hasUnsavedChanges() &&
         !_saving &&
         !_syncingNow &&
@@ -297,6 +307,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<bool> _onWillPop(TimerController controller) async {
+    // Prompt before leaving if the user still has unsaved changes.
     if (!_hasUnsavedChanges()) {
       return true;
     }
@@ -339,6 +350,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _saveDisplaySettings() async {
+    // Persist display settings and then refresh the baseline snapshot.
     final room = _roomController.text.trim();
     await ConfigManager.saveDisplaySettings(
       DisplaySettings(
@@ -370,6 +382,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   List<String> _parseNtpServers() {
+    // Allow pasting servers separated by newlines, commas, or semicolons.
     return _ntpController.text
         .split(RegExp(r'[\n,;]+'))
         .map((e) => e.trim())
@@ -378,6 +391,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _setOrChangeExitPassword() async {
+    // Keep the exit password short and numeric to reduce entry mistakes.
     final password = await ExitPasswordDialog.show(context);
     if (password == null) {
       return;
@@ -400,6 +414,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<bool> _confirmRotateTwoFactor() async {
+    // Re-enrollment invalidates the old secret, so warn the operator first.
     if (_twoFactorEntries.isEmpty) {
       return true;
     }
@@ -466,6 +481,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _enrollTwoFactorEntry() async {
+    // Enrollment generates a fresh secret and verifies the newly scanned code.
     final now = DateTime.now().millisecondsSinceEpoch;
     final random = Random.secure().nextInt(1 << 20);
     final factorId = '${now}_$random';
@@ -683,6 +699,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _removeTwoFactorEntry(String id) {
+    // Removing the last entry disables 2FA automatically.
     setState(() {
       _twoFactorEntries = _twoFactorEntries.where((factor) => factor.id != id).toList();
       if (_twoFactorEntries.isEmpty) {
@@ -693,6 +710,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _applyTheme({ThemeMode? mode, ThemePalette? palette}) async {
+    // Theme changes are delegated to the app shell so the whole app stays in sync.
     final nextMode = mode ?? _themeMode;
     final nextPalette = palette ?? _themePalette;
     if (_themeUpdating) {
@@ -730,6 +748,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _saveSyncSettings(TimerController controller) {
+    // Sync settings are written separately from display settings but use the same inputs.
     final servers = _parseNtpServers();
     controller.setNtpServers(servers);
     controller.setMode(_lastModeHint);
@@ -752,6 +771,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _saveAll(TimerController controller) async {
+    // Save sync first, then display, so the controller and UI remain coherent.
     if (!_hasUnsavedChanges()) {
       ScaffoldMessenger.of(
         context,
@@ -780,6 +800,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _syncNow(TimerController controller) async {
+    // Manual sync gives the operator a one-shot refresh of time data.
     if (_syncingNow) {
       return;
     }
@@ -822,6 +843,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    // The page stays connected to the live controller so edits and status stay current.
     final controller = TimerScope.of(context);
     final syncAt = controller.lastSyncAt;
     final width = MediaQuery.sizeOf(context).width;

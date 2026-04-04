@@ -35,8 +35,25 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_security_channel_;
 
+  bool presentation_input_lock_enabled_ = false;
+  bool system_gesture_suppression_enabled_ = false;
+  bool presentation_watchdog_enabled_ = false;
+  HHOOK keyboard_hook_ = nullptr;
+
+  static FlutterWindow* keyboard_hook_owner_;
+  static LRESULT CALLBACK KeyboardHookProc(int code, WPARAM wparam,
+                                           LPARAM lparam);
+
   bool IsUiAccessEnabled() const;
   double GetMonitorDpi() const;
+  bool SetPresentationInputLock(bool enabled);
+  bool InstallKeyboardHook();
+  void UninstallKeyboardHook();
+  void SetSystemGestureSuppression(bool enabled);
+  bool StartPresentationWatchdog();
+  void StopPresentationWatchdog();
+  bool ShouldBlockKeyEvent(const KBDLLHOOKSTRUCT& info,
+                           WPARAM message) const;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

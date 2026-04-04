@@ -89,6 +89,18 @@ class UpdateService {
         message: '已下载 v${release.version} 更新包，安装后下次启动会自动进入升级后的欢迎页。',
       );
     } catch (error) {
+      final cachedPackage = Platform.isWindows
+          ? await _loadAnyPendingPackage()
+          : null;
+      if (cachedPackage != null) {
+        return UpdateCheckOutcome(
+          platformSupported: true,
+          currentVersion: currentVersion,
+          latestVersion: cachedPackage.version,
+          downloadedPackage: cachedPackage,
+          message: '在线检查失败，但检测到已下载的更新包 v${cachedPackage.version}，可直接安装。',
+        );
+      }
       return UpdateCheckOutcome(
         platformSupported: Platform.isWindows,
         currentVersion: currentVersion,
@@ -238,6 +250,14 @@ class UpdateService {
   static Future<DownloadedUpdatePackage?> _loadPendingPackageIfSameVersion({
     required String version,
   }) async {
+    final package = await _loadAnyPendingPackage();
+    if (package == null || package.version != version) {
+      return null;
+    }
+    return package;
+  }
+
+  static Future<DownloadedUpdatePackage?> _loadAnyPendingPackage() async {
     if (!await _manifestFile.exists()) {
       return null;
     }
@@ -245,9 +265,6 @@ class UpdateService {
       final lines = await _manifestFile.readAsLines();
       final values = _parseKeyValueLines(lines);
       final package = DownloadedUpdatePackage.fromKeyValueLines(values);
-      if (package.version != version) {
-        return null;
-      }
       if (package.archivePath.isEmpty || !File(package.archivePath).existsSync()) {
         return null;
       }

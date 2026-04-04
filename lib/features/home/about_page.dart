@@ -150,6 +150,7 @@ class _ReleaseCard extends StatefulWidget {
 class _ReleaseCardState extends State<_ReleaseCard> {
   late final Future<PackageInfo> _packageInfoFuture;
   bool _checking = false;
+  bool _installing = false;
   String _statusText = '点击下方按钮检查更新。';
   DownloadedUpdatePackage? _pendingPackage;
 
@@ -183,13 +184,31 @@ class _ReleaseCardState extends State<_ReleaseCard> {
 
   Future<void> _installNow() async {
     final package = _pendingPackage;
-    if (package == null) {
+    if (package == null || _installing) {
       return;
     }
+
+    setState(() {
+      _installing = true;
+      _statusText = '正在启动安装器，稍后将自动退出当前程序...';
+    });
+
     final launched = await UpdateService.launchInstaller(package);
-    if (!launched || !mounted) {
+    if (!mounted) {
       return;
     }
+    if (!launched) {
+      setState(() {
+        _installing = false;
+        _statusText = '自动安装启动失败，请使用“打开本次更新页面”或“下载 EXE 安装器”手动更新。';
+      });
+      return;
+    }
+
+    setState(() {
+      _statusText = '安装器已启动，程序即将退出。';
+    });
+
     await Future<void>.delayed(const Duration(milliseconds: 250));
     SystemNavigator.pop();
   }
@@ -202,6 +221,16 @@ class _ReleaseCardState extends State<_ReleaseCard> {
   Future<void> _downloadAutoInstaller() async {
     final uri = Uri.parse(
       'https://github.com/ziyi127/Aeterna/releases/latest/download/aeterna-setup.exe',
+    );
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _openPendingRelease() async {
+    final url = _pendingPackage?.releaseUrl;
+    final uri = Uri.parse(
+      (url == null || url.isEmpty)
+          ? 'https://github.com/ziyi127/Aeterna/releases/latest'
+          : url,
     );
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
@@ -274,9 +303,16 @@ class _ReleaseCardState extends State<_ReleaseCard> {
                 label: Text(_checking ? '检查中' : '检查更新'),
               ),
               OutlinedButton.icon(
-                onPressed: _pendingPackage == null ? null : _installNow,
+                onPressed: (_pendingPackage == null || _checking || _installing)
+                    ? null
+                    : _installNow,
                 icon: const Icon(Icons.play_arrow_outlined),
-                label: const Text('确认安装'),
+                label: Text(_installing ? '安装器启动中' : '确认安装'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _openPendingRelease,
+                icon: const Icon(Icons.notes_outlined),
+                label: const Text('打开本次更新页面'),
               ),
               OutlinedButton.icon(
                 onPressed: _downloadAutoInstaller,

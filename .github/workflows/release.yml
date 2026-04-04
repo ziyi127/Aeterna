@@ -295,6 +295,7 @@ jobs:
         uses: softprops/action-gh-release@v2.6.1
         with:
           generate_release_notes: true
+          overwrite_files: true
           files: |
             artifacts/*.7z
             artifacts/*.tar.zst

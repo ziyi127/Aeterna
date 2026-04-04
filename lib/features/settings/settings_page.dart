@@ -502,11 +502,11 @@ class _SettingsPageState extends State<SettingsPage> {
       _F2AEnrollmentMode.authenticatorApp => '请使用第三方 F2A 验证器扫码，扫码后会生成 6 位动态码。',
     };
     final verifyTitle = switch (mode) {
-      _F2AEnrollmentMode.webPage => '验证密钥',
+      _F2AEnrollmentMode.webPage => '验证网页验证码',
       _F2AEnrollmentMode.authenticatorApp => '验证动态验证码',
     };
     final verifyHint = switch (mode) {
-      _F2AEnrollmentMode.webPage => '请输入网页中看到的 F2A 密钥，确认你已成功读取。',
+      _F2AEnrollmentMode.webPage => '请输入网页验证器当前显示的 6 位验证码，确认已成功读取。',
       _F2AEnrollmentMode.authenticatorApp => '请输入第三方验证器当前显示的 6 位验证码。',
     };
     final primaryLabel = switch (mode) {
@@ -615,10 +615,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: verifyController,
+                  keyboardType: TextInputType.number,
                   decoration: InputDecoration(
-                    labelText: mode == _F2AEnrollmentMode.webPage ? 'F2A 密钥' : '6 位验证码',
+                    labelText: '6 位验证码',
                     hintText: mode == _F2AEnrollmentMode.webPage
-                        ? '仅限 A-Z 和 2-7'
+                        ? '来自 Aeterna 网页验证器'
                         : '来自第三方验证器',
                   ),
                 ),
@@ -633,10 +634,11 @@ class _SettingsPageState extends State<SettingsPage> {
             FilledButton(
               onPressed: () {
                 final ok = switch (mode) {
-                  _F2AEnrollmentMode.webPage => verifyController.text
-                      .toUpperCase()
-                      .replaceAll(RegExp(r'[^A-Z2-7]'), '') ==
-                      secret.toUpperCase().replaceAll(RegExp(r'[^A-Z2-7]'), ''),
+                  _F2AEnrollmentMode.webPage => F2ATotp.verifyCode(
+                      code: verifyController.text,
+                      factors: [F2AFactor(id: factorId, name: 'F2A 1', secret: secret, createdAtMs: now)],
+                      at: DateTime.now(),
+                    ),
                   _F2AEnrollmentMode.authenticatorApp => F2ATotp.verifyCode(
                       code: verifyController.text,
                       factors: [F2AFactor(id: factorId, name: 'F2A 1', secret: secret, createdAtMs: now)],
@@ -645,7 +647,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 };
                 if (!ok) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(mode == _F2AEnrollmentMode.webPage ? '密钥不匹配，请确认网页读取结果' : '验证码不正确，请重试')),
+                    SnackBar(content: Text(mode == _F2AEnrollmentMode.webPage ? '验证码不正确，请确认网页当前 6 位码' : '验证码不正确，请重试')),
                   );
                   return;
                 }

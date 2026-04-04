@@ -190,7 +190,7 @@ class _ReleaseCardState extends State<_ReleaseCard> {
 
     setState(() {
       _installing = true;
-      _statusText = '正在启动安装器，稍后将自动退出当前程序...';
+      _statusText = '正在启动 Squirrel 更新器，稍后将自动退出当前程序...';
     });
 
     final launched = await UpdateService.launchInstaller(package);
@@ -200,13 +200,13 @@ class _ReleaseCardState extends State<_ReleaseCard> {
     if (!launched) {
       setState(() {
         _installing = false;
-        _statusText = '自动安装启动失败，请使用“打开本次更新页面”或“下载 EXE 安装器”手动更新。';
+        _statusText = '自动更新启动失败，请打开本次更新页面手动处理。';
       });
       return;
     }
 
     setState(() {
-      _statusText = '安装器已启动，程序即将退出。';
+      _statusText = '更新器已启动，程序即将退出。';
     });
 
     await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -215,13 +215,6 @@ class _ReleaseCardState extends State<_ReleaseCard> {
 
   Future<void> _openRepo() async {
     final uri = Uri.parse(_githubRepoUrl);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  Future<void> _downloadAutoInstaller() async {
-    final uri = Uri.parse(
-      'https://github.com/ziyi127/Aeterna/releases/latest/download/aeterna-setup.exe',
-    );
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -281,7 +274,7 @@ class _ReleaseCardState extends State<_ReleaseCard> {
           Text('自动更新', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
           Text(
-            '仅 Windows 版本提供自动安装程序。检查更新后可一键安装，或下载 EXE 安装器手动升级。',
+            '仅 Windows 版本提供自动更新，当前使用 Squirrel.Windows + ZSTD 负载。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 10),
@@ -313,11 +306,6 @@ class _ReleaseCardState extends State<_ReleaseCard> {
                 onPressed: _openPendingRelease,
                 icon: const Icon(Icons.notes_outlined),
                 label: const Text('打开本次更新页面'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _downloadAutoInstaller,
-                icon: const Icon(Icons.download_outlined),
-                label: const Text('下载 EXE 安装器'),
               ),
             ],
           ),

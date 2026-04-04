@@ -12,17 +12,10 @@ class UpdateService {
   static const List<String> _preferredWindowsSquirrelFeedAssetNames = <String>[
     'aeterna-windows-squirrel-feed.tar.zst',
   ];
-  static const List<String> _preferredWindowsInstallerAssetNames = <String>[
-    'aeterna-setup.exe',
-    'aeterna-windows-installer.exe',
-  ];
-  static const List<String> _fallbackWindowsArchiveAssetNames = <String>[
-    'aeterna-windows-x64.tar.zst',
-    'aeterna-windows-x64.zip',
-  ];
   static const String _manifestFileName = 'pending_update.txt';
   static const String _successFileName = 'upgrade_success.txt';
   static const String _helperFileName = 'aeterna_updater_helper.exe';
+  static const String _squirrelFeedSuffix = '.tar.zst';
   static const Duration _networkTimeout = Duration(seconds: 15);
   static const Duration _payloadDownloadTimeout = Duration(minutes: 20);
 
@@ -72,7 +65,7 @@ class UpdateService {
           platformSupported: true,
           currentVersion: currentVersion,
           latestVersion: release.version,
-          message: '找到新版本 v${release.version}，但没有找到可用的 Windows 更新包（安装器或归档包）。',
+          message: '找到新版本 v${release.version}，但没有找到可用的 Squirrel ZSTD 更新负载。',
         );
       }
 
@@ -95,17 +88,12 @@ class UpdateService {
         release: release,
         selectedAsset: selectedAsset,
       );
-      final status = package.isInstaller
-          ? '已下载 v${release.version} 安装器，确认后将自动退出当前程序并启动升级。'
-          : (package.isSquirrelFeed
-                ? '已下载 v${release.version} 的 Squirrel 更新负载，确认后将由更新助手接管升级。'
-                : '已下载 v${release.version} 更新归档包，确认后将由更新助手完成替换。');
       return UpdateCheckOutcome(
         platformSupported: true,
         currentVersion: currentVersion,
         latestVersion: release.version,
         downloadedPackage: package,
-        message: status,
+        message: '已下载 v${release.version} 的 Squirrel 更新负载，确认后将自动退出并启动更新。',
       );
     } catch (error) {
       final cachedPackage = Platform.isWindows
@@ -130,6 +118,19 @@ class UpdateService {
 
   static Future<bool> launchInstaller(DownloadedUpdatePackage package) async {
     try {
+      if (!package.isSquirrelFeed) {
+        debugPrint('launchInstaller rejected: unsupported package type');
+        return false;
+      }
+      if (!_isSquirrelFeedPath(package.packagePath)) {
+        debugPrint('launchInstaller rejected: invalid payload suffix');
+        return false;
+      }
+      if (!File(package.packagePath).existsSync()) {
+        debugPrint('launchInstaller rejected: payload file missing');
+        return false;
+      }
+
       await _rootDirectory.create(recursive: true);
       await _writeKeyValueFile(_manifestFile, package.toKeyValueLines());
       final resolvedExecutable = File(Platform.resolvedExecutable);
@@ -177,6 +178,12 @@ class UpdateService {
     required _GitHubRelease release,
     required _SelectedAsset selectedAsset,
   }) async {
+    if (!_isSquirrelFeedPath(selectedAsset.asset.name)) {
+      throw StateError(
+        '仅支持 Squirrel ZSTD 负载，当前资产不合法: ${selectedAsset.asset.name}',
+      );
+    }
+
     final downloadDir = _rootDirectory;
     await downloadDir.create(recursive: true);
     final packagePath =
@@ -211,10 +218,6 @@ class UpdateService {
       version: release.version,
       assetName: selectedAsset.asset.name,
       packagePath: packagePath,
-      targetDir: selectedAsset.packageType == UpdatePackageType.archive
-          ? File(Platform.resolvedExecutable).parent.path
-          : '',
-      appExecutableName: 'aeterna.exe',
       downloadUrl: selectedAsset.asset.downloadUrl,
       releaseUrl: release.releaseUrl,
     );
@@ -276,7 +279,7 @@ class UpdateService {
 
     final fuzzySquirrelFeed = normalized.where((asset) {
       final name = asset.name.toLowerCase();
-      return name.endsWith('.tar.zst') &&
+      return name.endsWith(_squirrelFeedSuffix) &&
           name.contains('squirrel') &&
           name.contains('windows');
     }).firstOrNull;
@@ -284,49 +287,6 @@ class UpdateService {
       return _SelectedAsset(
         packageType: UpdatePackageType.squirrelFeed,
         asset: fuzzySquirrelFeed,
-      );
-    }
-
-    final exactInstaller = findExact(_preferredWindowsInstallerAssetNames);
-    if (exactInstaller != null) {
-      return _SelectedAsset(
-        packageType: UpdatePackageType.installer,
-        asset: exactInstaller,
-      );
-    }
-
-    final fuzzyInstaller = normalized.where((asset) {
-      final name = asset.name.toLowerCase();
-      return name.endsWith('.exe') &&
-          (name.contains('setup') || name.contains('installer')) &&
-          name.contains('aeterna');
-    }).firstOrNull;
-    if (fuzzyInstaller != null) {
-      return _SelectedAsset(
-        packageType: UpdatePackageType.installer,
-        asset: fuzzyInstaller,
-      );
-    }
-
-    final exactArchive = findExact(_fallbackWindowsArchiveAssetNames);
-    if (exactArchive != null) {
-      return _SelectedAsset(
-        packageType: UpdatePackageType.archive,
-        asset: exactArchive,
-      );
-    }
-
-    final fuzzyArchive = normalized.where((asset) {
-      final name = asset.name.toLowerCase();
-      final isArchive = name.endsWith('.tar.zst') || name.endsWith('.zip');
-      return isArchive &&
-          name.contains('windows') &&
-          (name.contains('x64') || name.contains('win64'));
-    }).firstOrNull;
-    if (fuzzyArchive != null) {
-      return _SelectedAsset(
-        packageType: UpdatePackageType.archive,
-        asset: fuzzyArchive,
       );
     }
 
@@ -397,10 +357,18 @@ class UpdateService {
           !File(package.packagePath).existsSync()) {
         return null;
       }
+      if (!package.isSquirrelFeed ||
+          !_isSquirrelFeedPath(package.packagePath)) {
+        return null;
+      }
       return package;
     } catch (_) {
       return null;
     }
+  }
+
+  static bool _isSquirrelFeedPath(String value) {
+    return value.trim().toLowerCase().endsWith(_squirrelFeedSuffix);
   }
 }
 

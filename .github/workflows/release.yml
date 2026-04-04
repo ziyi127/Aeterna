@@ -203,35 +203,6 @@ jobs:
               Remove-Item -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Install Inno Setup
-        if: matrix.target == 'windows'
-        shell: pwsh
-        run: |
-          choco install innosetup -y --no-progress
-
-      - name: Build Windows EXE installer
-        if: matrix.target == 'windows'
-        shell: pwsh
-        run: |
-          $workspace = $env:GITHUB_WORKSPACE
-          $sourceDir = Join-Path $workspace 'build/windows/x64/runner/Release'
-          $outputDir = Join-Path $workspace 'build/windows/installer'
-
-          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-          $version = '${{ github.ref_name }}'
-          if ($version.StartsWith('v')) {
-            $version = $version.Substring(1)
-          }
-          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DMyAppVersion=$version" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" "tools\\windows\\aeterna-installer.iss"
-
-      - name: Upload Windows EXE installer artifact
-        if: matrix.target == 'windows'
-        uses: actions/upload-artifact@v6
-        with:
-          name: aeterna-windows-installer
-          path: build/windows/installer/*.exe
-          if-no-files-found: error
-
       - name: Upload artifact
         if: matrix.optional != true
         uses: actions/upload-artifact@v6
@@ -287,9 +258,9 @@ jobs:
             zip -r -9 "${dir}.zip" "$dir"
           done
 
-      - name: Archive Windows installer package
+      - name: Archive Windows Squirrel feed package
         run: |
-          tar --zstd -cf artifacts/aeterna-windows-x64.tar.zst -C artifacts/aeterna-windows-x64 .
+          tar --zstd -cf artifacts/aeterna-windows-squirrel-feed.tar.zst -C artifacts/aeterna-windows-x64 .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2.6.1
@@ -299,6 +270,5 @@ jobs:
           files: |
             artifacts/*.zip
             artifacts/*.tar.zst
-            artifacts/aeterna-windows-installer/*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

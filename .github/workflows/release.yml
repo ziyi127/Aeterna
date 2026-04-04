@@ -213,12 +213,16 @@ jobs:
         if: matrix.target == 'windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path build/windows/installer | Out-Null
+          $workspace = $env:GITHUB_WORKSPACE
+          $sourceDir = Join-Path $workspace 'build/windows/x64/runner/Release'
+          $outputDir = Join-Path $workspace 'build/windows/installer'
+
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
           $version = '${{ github.ref_name }}'
           if ($version.StartsWith('v')) {
             $version = $version.Substring(1)
           }
-          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DMyAppVersion=$version" "/DSourceDir=build\\windows\\x64\\runner\\Release" "/DOutputDir=build\\windows\\installer" "tools\\windows\\aeterna-installer.iss"
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DMyAppVersion=$version" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" "tools\\windows\\aeterna-installer.iss"
 
       - name: Upload Windows EXE installer artifact
         if: matrix.target == 'windows'

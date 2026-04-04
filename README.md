@@ -14,13 +14,9 @@ Aeterna 是一个面向考场一体机/投影场景的考试看板系统，提�
 
 ## GitHub Pages
 
-本仓库包含独立的 GitHub Pages 页面，用于 F2A 多重验证：
 
-- 页面入口：`pages/index.html`
-- 验证页：`pages/f2a/index.html`
-- 自动部署：`.github/workflows/pages.yml`
 
-部署后，仓库 Pages 站点会自动跳转到 F2A 页面。
+Pages 地址：`https://ziyi127.github.io/Aeterna/`
 
 ## 技术栈
 

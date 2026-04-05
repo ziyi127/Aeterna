@@ -9,6 +9,7 @@
 #include <map>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "flutter_window.h"
@@ -86,6 +87,21 @@ std::string ArgumentValue(
     }
   }
   return std::string();
+}
+
+void FillMapFromArguments(
+    const std::vector<std::string>& args,
+    std::map<std::string, std::string>* values,
+    const std::vector<std::pair<std::string, std::string>>& mappings) {
+  if (values == nullptr) {
+    return;
+  }
+  for (const auto& [argumentPrefix, key] : mappings) {
+    const std::string value = ArgumentValue(args, argumentPrefix);
+    if (!value.empty()) {
+      (*values)[key] = value;
+    }
+  }
 }
 
 std::map<std::string, std::string> ParseKeyValueLines(
@@ -545,16 +561,34 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
 
   const path manifest_path = GetManifestPath();
   std::string manifest_text;
+  std::map<std::string, std::string> values;
   if (!ReadTextFile(manifest_path, &manifest_text)) {
-    ::MessageBoxW(
-        nullptr,
-        L"未找到更新清单，无法继续安装。",
-        L"Aeterna 更新失败",
-        MB_ICONERROR | MB_OK);
-    return false;
+    values.clear();
+    FillMapFromArguments(
+        arguments,
+        &values,
+        {
+            {"--package-type=", "packageType"},
+            {"--package-path=", "packagePath"},
+            {"--version=", "version"},
+          {"--schema-version=", "schemaVersion"},
+            {"--asset-name=", "assetName"},
+            {"--download-url=", "downloadUrl"},
+            {"--release-url=", "releaseUrl"},
+            {"--payload-size=", "payloadSize"},
+            {"--payload-sha256=", "payloadSha256"},
+        });
+    if (values.empty()) {
+      ::MessageBoxW(
+          nullptr,
+          L"未找到更新清单，且没有可用的安装参数，无法继续安装。",
+          L"Aeterna 更新失败",
+          MB_ICONERROR | MB_OK);
+      return false;
+    }
+  } else {
+    values = ParseKeyValueLines(manifest_text);
   }
-
-  const auto values = ParseKeyValueLines(manifest_text);
   auto remove_manifest = [&manifest_path]() {
     std::error_code delete_error;
     std::filesystem::remove(manifest_path, delete_error);

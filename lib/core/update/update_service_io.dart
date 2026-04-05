@@ -284,7 +284,19 @@ class UpdateService {
 
       final process = await Process.start(
         helperPath,
-        ['--install-update', '--parent-pid=$pid'],
+        [
+          '--install-update',
+          '--parent-pid=$pid',
+          '--package-type=${package.packageType.wireValue}',
+          '--package-path=${package.packagePath}',
+          '--version=${package.version}',
+          '--schema-version=2',
+          '--asset-name=${package.assetName}',
+          '--download-url=${package.downloadUrl}',
+          '--release-url=${package.releaseUrl}',
+          '--payload-size=${package.payloadSize}',
+          '--payload-sha256=${package.payloadSha256}',
+        ],
         mode: ProcessStartMode.detached,
         runInShell: false,
       );

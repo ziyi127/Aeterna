@@ -2,6 +2,7 @@
 #include <flutter/flutter_view_controller.h>
 #include <shellapi.h>
 #include <windows.h>
+#include <winreg.h>
 
 #include <filesystem>
 #include <fstream>
@@ -193,6 +194,87 @@ bool LaunchDetachedProcess(
   return true;
 }
 
+bool WriteRegistryStringValue(
+    HKEY key,
+    const wchar_t* name,
+    const std::wstring& value) {
+  const auto* data = reinterpret_cast<const BYTE*>(value.c_str());
+  const DWORD size = static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t));
+  return ::RegSetValueExW(key, name, 0, REG_SZ, data, size) == ERROR_SUCCESS;
+}
+
+bool WriteRegistryDwordValue(HKEY key, const wchar_t* name, DWORD value) {
+  return ::RegSetValueExW(
+             key,
+             name,
+             0,
+             REG_DWORD,
+             reinterpret_cast<const BYTE*>(&value),
+             sizeof(value)) == ERROR_SUCCESS;
+}
+
+std::wstring QuotePathForCommand(const path& file_path) {
+  return L"\"" + file_path.wstring() + L"\"";
+}
+
+bool EnsureSquirrelUninstallRegistration() {
+  const path executable_path = GetCurrentModulePath();
+  if (executable_path.empty()) {
+    return false;
+  }
+
+  const path app_directory = executable_path.parent_path();
+  const std::wstring app_dir_name = app_directory.filename().wstring();
+  if (app_dir_name.size() <= 4 || _wcsnicmp(app_dir_name.c_str(), L"app-", 4) != 0) {
+    // Not running from a Squirrel-installed app-* directory.
+    return false;
+  }
+
+  const path root_app_directory = app_directory.parent_path();
+  const path update_exe = root_app_directory / L"Update.exe";
+  if (!std::filesystem::exists(update_exe)) {
+    return false;
+  }
+
+  const std::wstring uninstall_subkey =
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Aeterna";
+  HKEY key = nullptr;
+  DWORD disposition = 0;
+  const LONG create_result = ::RegCreateKeyExW(
+      HKEY_CURRENT_USER,
+      uninstall_subkey.c_str(),
+      0,
+      nullptr,
+      REG_OPTION_NON_VOLATILE,
+      KEY_SET_VALUE,
+      nullptr,
+      &key,
+      &disposition);
+  if (create_result != ERROR_SUCCESS || key == nullptr) {
+    return false;
+  }
+
+  const std::wstring uninstall_command =
+      QuotePathForCommand(update_exe) + L" --uninstall";
+  const std::wstring quiet_uninstall_command = uninstall_command + L" -s";
+  const std::wstring display_version = app_dir_name.substr(4);
+
+  bool ok = true;
+  ok = ok && WriteRegistryStringValue(key, L"DisplayName", L"Aeterna");
+  ok = ok && WriteRegistryStringValue(key, L"Publisher", L"ziyi127");
+  ok = ok && WriteRegistryStringValue(key, L"DisplayIcon", executable_path.wstring());
+  ok = ok && WriteRegistryStringValue(key, L"DisplayVersion", display_version);
+  ok = ok && WriteRegistryStringValue(key, L"InstallLocation", root_app_directory.wstring());
+  ok = ok && WriteRegistryStringValue(key, L"URLInfoAbout", L"https://github.com/ziyi127/Aeterna");
+  ok = ok && WriteRegistryStringValue(key, L"UninstallString", uninstall_command);
+  ok = ok && WriteRegistryStringValue(key, L"QuietUninstallString", quiet_uninstall_command);
+  ok = ok && WriteRegistryDwordValue(key, L"NoModify", 1);
+  ok = ok && WriteRegistryDwordValue(key, L"NoRepair", 1);
+
+  ::RegCloseKey(key);
+  return ok;
+}
+
 bool ParseUnsignedLong(const std::string& text, DWORD* value) {
   if (value == nullptr || text.empty()) {
     return false;
@@ -380,6 +462,30 @@ bool IsTarZstPayload(const path& payload_path) {
          _wcsicmp(stem_ext.c_str(), L".tar") == 0;
 }
 
+bool IsExePayload(const path& payload_path) {
+  const std::wstring ext = payload_path.extension().wstring();
+  return _wcsicmp(ext.c_str(), L".exe") == 0;
+}
+
+bool LaunchSetupExecutable(const path& setup_path) {
+  SHELLEXECUTEINFOW execute_info{};
+  execute_info.cbSize = sizeof(execute_info);
+  execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
+  execute_info.lpVerb = L"open";
+  execute_info.lpFile = setup_path.c_str();
+  execute_info.lpDirectory = setup_path.parent_path().c_str();
+  execute_info.nShow = SW_SHOWNORMAL;
+
+  const BOOL launched = ::ShellExecuteExW(&execute_info);
+  if (!launched) {
+    return false;
+  }
+  if (execute_info.hProcess != nullptr) {
+    ::CloseHandle(execute_info.hProcess);
+  }
+  return true;
+}
+
 bool LaunchHelperFromSelf(DWORD parent_process_id) {
   const path current_module_path = GetCurrentModulePath();
   const path helper_path = GetHelperPath();
@@ -496,6 +602,7 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
   const bool squirrel_feed_mode =
       package_type_raw == "squirrelFeed" ||
       !read_value("squirrelFeedPath").empty();
+  const bool setup_exe_mode = package_type_raw == "setupExe";
 
   if (squirrel_feed_mode) {
     const path payload_path = path(package_path);
@@ -569,6 +676,67 @@ bool RunInstallerMode(const std::vector<std::string>& arguments) {
     return true;
   }
 
+  if (setup_exe_mode) {
+    const path payload_path = path(package_path);
+    if (!std::filesystem::exists(payload_path)) {
+      remove_manifest();
+      ::MessageBoxW(
+          nullptr,
+          L"安装器文件不存在，无法继续。",
+          L"Aeterna 更新失败",
+          MB_ICONERROR | MB_OK);
+      return false;
+    }
+    if (!IsExePayload(payload_path)) {
+      remove_manifest();
+      ::MessageBoxW(
+          nullptr,
+          L"安装器格式非法（需要 .exe）。",
+          L"Aeterna 更新失败",
+          MB_ICONERROR | MB_OK);
+      return false;
+    }
+
+    std::error_code size_error;
+    const uint64_t actual_size = std::filesystem::file_size(payload_path, size_error);
+    if (size_error || actual_size == 0) {
+      remove_manifest();
+      ::MessageBoxW(
+          nullptr,
+          L"安装器文件损坏或为空，已拒绝执行。",
+          L"Aeterna 更新失败",
+          MB_ICONERROR | MB_OK);
+      return false;
+    }
+    if (!payload_size_raw.empty()) {
+      uint64_t expected_size = 0;
+      if (!ParseUnsignedLongLong(payload_size_raw, &expected_size) ||
+          expected_size == 0 || expected_size != actual_size) {
+        remove_manifest();
+        ::MessageBoxW(
+            nullptr,
+            L"安装器大小校验失败，已拒绝执行。",
+            L"Aeterna 更新失败",
+            MB_ICONERROR | MB_OK);
+        return false;
+      }
+    }
+
+    if (!LaunchSetupExecutable(payload_path)) {
+      remove_manifest();
+      ::MessageBoxW(
+          nullptr,
+          L"安装器启动失败。",
+          L"Aeterna 更新失败",
+          MB_ICONERROR | MB_OK);
+      return false;
+    }
+
+    WriteSuccessMarker(version);
+    remove_manifest();
+    return true;
+  }
+
   remove_manifest();
   ::MessageBoxW(
       nullptr,
@@ -598,6 +766,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       return EXIT_SUCCESS;
     }
   }
+
+  // Self-heal missing or broken uninstall registration for Squirrel installs.
+  EnsureSquirrelUninstallRegistration();
 
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.

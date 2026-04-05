@@ -15,10 +15,15 @@ class UpdateService {
   static const List<String> _preferredWindowsSquirrelFeedAssetNames = <String>[
     'aeterna-windows-squirrel-feed.tar.zst',
   ];
+  static const List<String> _preferredWindowsSetupExeAssetNames = <String>[
+    'aeterna-setup.exe',
+    'setup.exe',
+  ];
   static const String _manifestFileName = 'pending_update.txt';
   static const String _successFileName = 'upgrade_success.txt';
   static const String _helperFileName = 'aeterna_updater_helper.exe';
   static const String _squirrelFeedSuffix = '.tar.zst';
+  static const String _setupExeSuffix = '.exe';
   static const Duration _networkTimeout = Duration(seconds: 15);
   static const Duration _payloadDownloadTimeout = Duration(minutes: 20);
 
@@ -68,7 +73,7 @@ class UpdateService {
           platformSupported: true,
           currentVersion: currentVersion,
           latestVersion: release.version,
-          message: '找到新版本 v${release.version}，但没有找到可用的 Squirrel ZSTD 更新负载。',
+          message: '找到新版本 v${release.version}，但没有找到可用的更新负载（Squirrel feed 或 Setup.exe）。',
         );
       }
 
@@ -135,7 +140,23 @@ class UpdateService {
       return null;
     }
 
-    for (final assetName in _preferredWindowsSquirrelFeedAssetNames) {
+    final fallbackAssets = <_FallbackAssetCandidate>[
+      ..._preferredWindowsSquirrelFeedAssetNames.map(
+        (name) => _FallbackAssetCandidate(
+          name: name,
+          packageType: UpdatePackageType.squirrelFeed,
+        ),
+      ),
+      ..._preferredWindowsSetupExeAssetNames.map(
+        (name) => _FallbackAssetCandidate(
+          name: name,
+          packageType: UpdatePackageType.setupExe,
+        ),
+      ),
+    ];
+
+    for (final candidate in fallbackAssets) {
+      final assetName = candidate.name;
       final directUrl =
           'https://github.com/$_owner/$_repo/releases/latest/download/$assetName';
 
@@ -183,7 +204,7 @@ class UpdateService {
         final payloadSha256 = await _computeFileSha256Hex(file);
 
         final package = DownloadedUpdatePackage(
-          packageType: UpdatePackageType.squirrelFeed,
+          packageType: candidate.packageType,
           version: releaseInfo?.version ?? currentVersion,
           assetName: assetName,
           packagePath: packagePath,
@@ -223,10 +244,12 @@ class UpdateService {
   static Future<bool> launchInstaller(DownloadedUpdatePackage package) async {
     try {
       if (!package.isSquirrelFeed) {
-        debugPrint('launchInstaller rejected: unsupported package type');
-        return false;
+        if (!package.isSetupExe) {
+          debugPrint('launchInstaller rejected: unsupported package type');
+          return false;
+        }
       }
-      if (!_isSquirrelFeedPath(package.packagePath)) {
+      if (!_isAllowedPayloadPath(package.packageType, package.packagePath)) {
         debugPrint('launchInstaller rejected: invalid payload suffix');
         return false;
       }
@@ -302,9 +325,9 @@ class UpdateService {
     required _GitHubRelease release,
     required _SelectedAsset selectedAsset,
   }) async {
-    if (!_isSquirrelFeedPath(selectedAsset.asset.name)) {
+    if (!_isAllowedAssetForType(selectedAsset.packageType, selectedAsset.asset.name)) {
       throw StateError(
-        '仅支持 Squirrel ZSTD 负载，当前资产不合法: ${selectedAsset.asset.name}',
+        '更新负载文件后缀不匹配: ${selectedAsset.asset.name}',
       );
     }
 
@@ -418,6 +441,14 @@ class UpdateService {
       );
     }
 
+    final exactSetupExe = findExact(_preferredWindowsSetupExeAssetNames);
+    if (exactSetupExe != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.setupExe,
+        asset: exactSetupExe,
+      );
+    }
+
     final fuzzySquirrelFeed = normalized.where((asset) {
       final name = asset.name.toLowerCase();
       return name.endsWith(_squirrelFeedSuffix) &&
@@ -428,6 +459,18 @@ class UpdateService {
       return _SelectedAsset(
         packageType: UpdatePackageType.squirrelFeed,
         asset: fuzzySquirrelFeed,
+      );
+    }
+
+    final fuzzySetupExe = normalized.where((asset) {
+      final name = asset.name.toLowerCase();
+      return name.endsWith(_setupExeSuffix) &&
+          (name.contains('setup') || name.contains('installer'));
+    }).firstOrNull;
+    if (fuzzySetupExe != null) {
+      return _SelectedAsset(
+        packageType: UpdatePackageType.setupExe,
+        asset: fuzzySetupExe,
       );
     }
 
@@ -524,7 +567,13 @@ class UpdateService {
         return null;
       }
       if (!package.isSquirrelFeed ||
-          !_isSquirrelFeedPath(package.packagePath)) {
+          !_isAllowedPayloadPath(package.packageType, package.packagePath)) {
+        if (!package.isSetupExe ||
+            !_isAllowedPayloadPath(package.packageType, package.packagePath)) {
+          return null;
+        }
+      }
+      if (!package.isSquirrelFeed && !package.isSetupExe) {
         return null;
       }
       final payloadFile = File(package.packagePath);
@@ -554,6 +603,23 @@ class UpdateService {
 
   static bool _isSquirrelFeedPath(String value) {
     return value.trim().toLowerCase().endsWith(_squirrelFeedSuffix);
+  }
+
+  static bool _isSetupExePath(String value) {
+    return value.trim().toLowerCase().endsWith(_setupExeSuffix);
+  }
+
+  static bool _isAllowedAssetForType(UpdatePackageType type, String name) {
+    switch (type) {
+      case UpdatePackageType.squirrelFeed:
+        return _isSquirrelFeedPath(name);
+      case UpdatePackageType.setupExe:
+        return _isSetupExePath(name);
+    }
+  }
+
+  static bool _isAllowedPayloadPath(UpdatePackageType type, String path) {
+    return _isAllowedAssetForType(type, path);
   }
 }
 
@@ -610,6 +676,13 @@ class _SelectedAsset {
 
   final UpdatePackageType packageType;
   final _GitHubReleaseAsset asset;
+}
+
+class _FallbackAssetCandidate {
+  const _FallbackAssetCandidate({required this.name, required this.packageType});
+
+  final String name;
+  final UpdatePackageType packageType;
 }
 
 class _ResolvedReleaseInfo {

@@ -16,13 +16,15 @@ class UpdateCheckOutcome {
   bool get hasUpdate => downloadedPackage != null;
 }
 
-enum UpdatePackageType { squirrelFeed }
+enum UpdatePackageType { squirrelFeed, setupExe }
 
 extension UpdatePackageTypeCodec on UpdatePackageType {
   String get wireValue {
     switch (this) {
       case UpdatePackageType.squirrelFeed:
         return 'squirrelFeed';
+      case UpdatePackageType.setupExe:
+        return 'setupExe';
     }
   }
 
@@ -30,6 +32,9 @@ extension UpdatePackageTypeCodec on UpdatePackageType {
     switch (value?.trim().toLowerCase()) {
       case 'squirrelfeed':
         return UpdatePackageType.squirrelFeed;
+      case 'setupexe':
+      case 'installerexe':
+        return UpdatePackageType.setupExe;
       default:
         return null;
     }
@@ -58,6 +63,8 @@ class DownloadedUpdatePackage {
   final String payloadSha256;
 
   bool get isSquirrelFeed => packageType == UpdatePackageType.squirrelFeed;
+
+  bool get isSetupExe => packageType == UpdatePackageType.setupExe;
 
   Map<String, String> toKeyValueLines() {
     final values = <String, String>{

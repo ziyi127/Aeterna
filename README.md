@@ -112,6 +112,9 @@ Aeterna/
 
 [GNU General Public License v3.0](LICENSE)
 
+> [!IMPORTANT]
+> Apache2.0许可证已停用，现在使用新的许可证方案，请查阅最新版许可证！(๑•̀ㅂ•́)و✧
+
 版权所有 © 2026 [ziyi127](https://github.com/ziyi127)
 
 ---

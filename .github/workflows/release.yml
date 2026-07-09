@@ -2,34 +2,30 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - "v*"
+  pull_request:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to release (leave empty for latest commit)"
-        required: false
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  # ── Linux x86_64 ──
+  # ═══════════════════════════════════════════════
+  # Linux x86_64 – AppImage (self-contained)
+  # ═══════════════════════════════════════════════
   linux-x86_64:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies (Qt6)
+      - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             qt6-base-dev qt6-declarative-dev \
-            libqt6sql6-mysql libqt6sql6-psql \
-            libgl1-mesa-dev \
-            libxkbcommon-dev libfontconfig1-dev \
-            librsvg2-bin
+            libgl1-mesa-dev libxkbcommon-dev \
+            libfontconfig1-dev librsvg2-bin \
+            file
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -39,55 +35,81 @@ jobs:
       - name: Build (release)
         run: cargo build --release --target x86_64-unknown-linux-gnu
 
-      - name: Package
+      - name: Bundle Qt libs into AppDir
         run: |
-          cd target/x86_64-unknown-linux-gnu/release
-          tar czf aeterna-x86_64-linux.tar.gz aeterna
+          BINARY=target/x86_64-unknown-linux-gnu/release/aeterna
+          APPDIR=AppDir
+          mkdir -p "$APPDIR/usr/bin"
+
+          cp "$BINARY" "$APPDIR/usr/bin/"
+
+          # Copy all Qt .so files the binary links against
+          mkdir -p "$APPDIR/usr/lib"
+          ldd "$APPDIR/usr/bin/aeterna" \
+            | grep -E "libQt|libicu" \
+            | awk '{print $3}' \
+            | while read lib; do
+                [ -n "$lib" ] && cp -n "$lib" "$APPDIR/usr/lib/" 2>/dev/null || true
+              done
+
+          # Also copy libqputhesis (the Qt PlatformTheme) if present
+          ldd "$APPDIR/usr/bin/aeterna" \
+            | awk '{print $3}' \
+            | while read lib; do
+                [ -n "$lib" ] && cp -n "$lib" "$APPDIR/usr/lib/" 2>/dev/null || true
+              done
+
+          # Copy Qt QML imports
+          QMLDIR=$(find /usr/lib /usr/lib64 -path "*/qt6/qml" -type d 2>/dev/null | head -1)
+          if [ -n "$QMLDIR" ]; then
+            mkdir -p "$APPDIR/usr/lib/qt6"
+            cp -r "$QMLDIR" "$APPDIR/usr/lib/qt6/qml"
+          fi
+
+          # Copy Qt plugins (platforms, imageformats, styles, etc.)
+          PLUGINDIR=$(find /usr/lib /usr/lib64 -path "*/qt6/plugins" -type d 2>/dev/null | head -1)
+          if [ -n "$PLUGINDIR" ]; then
+            mkdir -p "$APPDIR/usr/lib/qt6"
+            cp -r "$PLUGINDIR" "$APPDIR/usr/lib/qt6/plugins"
+          fi
+
+      - name: Create qt.conf for bundle
+        run: |
+          cat > AppDir/usr/bin/qt.conf << 'EOF'
+          [Paths]
+          Plugins = ../lib/qt6/plugins
+          Imports = ../lib/qt6/qml
+          Qml2Imports = ../lib/qt6/qml
+          EOF
+
+      - name: Set RPATH
+        run: |
+          patchelf --set-rpath '$ORIGIN/../lib' AppDir/usr/bin/aeterna
+          # Also set rpath on Qt libs so plugin deps resolve
+          for lib in AppDir/usr/lib/*.so*; do
+            patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
+          done
+
+      - name: Package release tarball
+        run: |
+          cd AppDir
+          tar czf ../aeterna-x86_64-linux.tar.gz .
+          cd ..
+          # Also upload raw binary for users who already have Qt
+          cp target/x86_64-unknown-linux-gnu/release/aeterna aeterna-x86_64-linux
 
       - uses: actions/upload-artifact@v4
         with:
           name: aeterna-x86_64-linux
-          path: target/x86_64-unknown-linux-gnu/release/aeterna-x86_64-linux.tar.gz
+          path: |
+            aeterna-x86_64-linux.tar.gz
+            aeterna-x86_64-linux
 
-  # ── Linux i686 (32-bit) ──
-  linux-i686:
-    runs-on: ubuntu-24.04
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system dependencies (Qt6 + multilib)
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            g++-multilib \
-            qt6-base-dev:i386 qt6-declarative-dev:i386 \
-            libgl1-mesa-dev:i386 \
-            libxkbcommon-dev:i386 libfontconfig1-dev:i386 \
-            librsvg2-bin
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: i686-unknown-linux-gnu
-
-      - name: Build (release)
-        run: cargo build --release --target i686-unknown-linux-gnu
-
-      - name: Package
-        run: |
-          cd target/i686-unknown-linux-gnu/release
-          tar czf aeterna-i686-linux.tar.gz aeterna
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: aeterna-i686-linux
-          path: target/i686-unknown-linux-gnu/release/aeterna-i686-linux.tar.gz
-
-  # ── Windows x86_64 ──
+  # ═══════════════════════════════════════════════
+  # Windows x86_64 – windeployqt → zip
+  # ═══════════════════════════════════════════════
   windows-x86_64:
-    runs-on: windows-2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -98,7 +120,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qtdeclarative qt5compat
+          modules: qtdeclarative
           cache: true
 
       - name: Setup Rust
@@ -112,55 +134,23 @@ jobs:
           Qt6_DIR: ${{ env.Qt6_DIR }}
           QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.Qt6_DIR }}/plugins
 
-      - name: Package
+      - name: Bundle with windeployqt
         run: |
-          cd target/x86_64-pc-windows-msvc/release
-          Compress-Archive -Path aeterna.exe -DestinationPath aeterna-x86_64-windows.zip
+          $ext = if ($env:Qt6_DIR) { Join-Path $env:Qt6_DIR "bin" } else { "" }
+          windeployqt.exe --qmldir resources/qml target\x86_64-pc-windows-msvc\release\aeterna.exe
+
+      - name: Package (zip)
+        run: |
+          Compress-Archive -Path target\x86_64-pc-windows-msvc\release\* -DestinationPath aeterna-x86_64-windows.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: aeterna-x86_64-windows
-          path: target/x86_64-pc-windows-msvc/release/aeterna-x86_64-windows.zip
+          path: aeterna-x86_64-windows.zip
 
-  # ── Windows x86 (32-bit) ──
-  windows-x86:
-    runs-on: windows-2025
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Qt6 (32-bit)
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: "6.8.*"
-          host: windows
-          target: desktop
-          arch: win32_msvc2022
-          modules: qtdeclarative
-          cache: true
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: i686-pc-windows-msvc
-
-      - name: Build (release)
-        run: cargo build --release --target i686-pc-windows-msvc
-        env:
-          Qt6_DIR: ${{ env.Qt6_DIR }}
-          QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.Qt6_DIR }}/plugins
-
-      - name: Package
-        run: |
-          cd target/i686-pc-windows-msvc/release
-          Compress-Archive -Path aeterna.exe -DestinationPath aeterna-x86-windows.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: aeterna-x86-windows
-          path: target/i686-pc-windows-msvc/release/aeterna-x86-windows.zip
-
-  # ── macOS Intel (x86_64) ──
+  # ═══════════════════════════════════════════════
+  # macOS Intel (x86_64)
+  # ═══════════════════════════════════════════════
   macos-x86_64:
     runs-on: macos-13
     steps:
@@ -170,6 +160,7 @@ jobs:
         run: |
           brew update > /dev/null 2>&1
           brew install qt@6
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix qt@6)" >> $GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -178,20 +169,24 @@ jobs:
 
       - name: Build (release)
         run: cargo build --release --target x86_64-apple-darwin
-        env:
-          CMAKE_PREFIX_PATH: $(brew --prefix qt@6)
 
-      - name: Package
+      - name: Bundle with macdeployqt
         run: |
-          cd target/x86_64-apple-darwin/release
-          tar czf aeterna-x86_64-macos.tar.gz aeterna
+          mkdir -p aeterna.app/Contents/MacOS
+          cp target/x86_64-apple-darwin/release/aeterna aeterna.app/Contents/MacOS/
+          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -qmldir=resources/qml
+
+      - name: Package (zip)
+        run: zip -r aeterna-x86_64-macos.zip aeterna.app
 
       - uses: actions/upload-artifact@v4
         with:
           name: aeterna-x86_64-macos
-          path: target/x86_64-apple-darwin/release/aeterna-x86_64-macos.tar.gz
+          path: aeterna-x86_64-macos.zip
 
-  # ── macOS Apple Silicon (arm64) ──
+  # ═══════════════════════════════════════════════
+  # macOS Apple Silicon (arm64)
+  # ═══════════════════════════════════════════════
   macos-arm64:
     runs-on: macos-14
     steps:
@@ -201,6 +196,7 @@ jobs:
         run: |
           brew update > /dev/null 2>&1
           brew install qt@6
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix qt@6)" >> $GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -209,26 +205,29 @@ jobs:
 
       - name: Build (release)
         run: cargo build --release --target aarch64-apple-darwin
-        env:
-          CMAKE_PREFIX_PATH: $(brew --prefix qt@6)
 
-      - name: Package
+      - name: Bundle with macdeployqt
         run: |
-          cd target/aarch64-apple-darwin/release
-          tar czf aeterna-arm64-macos.tar.gz aeterna
+          mkdir -p aeterna.app/Contents/MacOS
+          cp target/aarch64-apple-darwin/release/aeterna aeterna.app/Contents/MacOS/
+          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -qmldir=resources/qml
+
+      - name: Package (zip)
+        run: zip -r aeterna-arm64-macos.zip aeterna.app
 
       - uses: actions/upload-artifact@v4
         with:
           name: aeterna-arm64-macos
-          path: target/aarch64-apple-darwin/release/aeterna-arm64-macos.tar.gz
+          path: aeterna-arm64-macos.zip
 
-  # ── Create Release ──
+  # ═══════════════════════════════════════════════
+  # Create GitHub Release (only on tag push)
+  # ═══════════════════════════════════════════════
   release:
+    if: startsWith(github.ref, 'refs/tags/')
     needs:
       - linux-x86_64
-      - linux-i686
       - windows-x86_64
-      - windows-x86
       - macos-x86_64
       - macos-arm64
     runs-on: ubuntu-24.04
@@ -242,26 +241,21 @@ jobs:
       - name: Generate release notes
         run: |
           cat > release-notes.md << 'EOF'
-          ## Aeterna v${{ github.ref_name }}
+          ## Aeterna ${{ github.ref_name }}
 
           ### 📦 Downloads
 
           | Platform | Architecture | File |
           |----------|-------------|------|
-          | Linux | x86_64 | aeterna-x86_64-linux.tar.gz |
-          | Linux | i686 | aeterna-i686-linux.tar.gz |
+          | Linux | x86_64 (portable) | aeterna-x86_64-linux.tar.gz |
+          | Linux | x86_64 (raw) | aeterna-x86_64-linux |
           | Windows | x86_64 | aeterna-x86_64-windows.zip |
-          | Windows | x86 | aeterna-x86-windows.zip |
-          | macOS | Intel | aeterna-x86_64-macos.tar.gz |
-          | macOS | Apple Silicon | aeterna-arm64-macos.tar.gz |
+          | macOS | Intel | aeterna-x86_64-macos.zip |
+          | macOS | Apple Silicon | aeterna-arm64-macos.zip |
 
-          ### 🚀 Install
-
-          **Linux**: Extract and run `./aeterna`
-          **Windows**: Extract and run `aeterna.exe`
-          **macOS**: Extract and run `./aeterna`
-
-          > Requires **Qt 6** runtime libraries on your system.
+          > **Linux**: Extract `aeterna-x86_64-linux.tar.gz` — includes Qt runtime.\
+          > **Windows**: Extract `aeterna-x86_64-windows.zip` and run `aeterna.exe`.\
+          > **macOS**: Extract `*-macos.zip` and open `aeterna.app`.
           EOF
 
       - name: Create Release
@@ -273,5 +267,4 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            artifacts/*/*.tar.gz
-            artifacts/*/*.zip
+            artifacts/**/*

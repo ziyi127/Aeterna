@@ -1,0 +1,277 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (leave empty for latest commit)"
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Linux x86_64 ──
+  linux-x86_64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies (Qt6)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            qt6-base-dev qt6-declarative-dev \
+            libqt6sql6-mysql libqt6sql6-psql \
+            libgl1-mesa-dev \
+            libxkbcommon-dev libfontconfig1-dev \
+            librsvg2-bin
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build (release)
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Package
+        run: |
+          cd target/x86_64-unknown-linux-gnu/release
+          tar czf aeterna-x86_64-linux.tar.gz aeterna
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aeterna-x86_64-linux
+          path: target/x86_64-unknown-linux-gnu/release/aeterna-x86_64-linux.tar.gz
+
+  # ── Linux i686 (32-bit) ──
+  linux-i686:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies (Qt6 + multilib)
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            g++-multilib \
+            qt6-base-dev:i386 qt6-declarative-dev:i386 \
+            libgl1-mesa-dev:i386 \
+            libxkbcommon-dev:i386 libfontconfig1-dev:i386 \
+            librsvg2-bin
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+
+      - name: Build (release)
+        run: cargo build --release --target i686-unknown-linux-gnu
+
+      - name: Package
+        run: |
+          cd target/i686-unknown-linux-gnu/release
+          tar czf aeterna-i686-linux.tar.gz aeterna
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aeterna-i686-linux
+          path: target/i686-unknown-linux-gnu/release/aeterna-i686-linux.tar.gz
+
+  # ── Windows x86_64 ──
+  windows-x86_64:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.*"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtdeclarative qt5compat
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build (release)
+        run: cargo build --release --target x86_64-pc-windows-msvc
+        env:
+          Qt6_DIR: ${{ env.Qt6_DIR }}
+          QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.Qt6_DIR }}/plugins
+
+      - name: Package
+        run: |
+          cd target/x86_64-pc-windows-msvc/release
+          Compress-Archive -Path aeterna.exe -DestinationPath aeterna-x86_64-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aeterna-x86_64-windows
+          path: target/x86_64-pc-windows-msvc/release/aeterna-x86_64-windows.zip
+
+  # ── Windows x86 (32-bit) ──
+  windows-x86:
+    runs-on: windows-2025
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6 (32-bit)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.*"
+          host: windows
+          target: desktop
+          arch: win32_msvc2022
+          modules: qtdeclarative
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Build (release)
+        run: cargo build --release --target i686-pc-windows-msvc
+        env:
+          Qt6_DIR: ${{ env.Qt6_DIR }}
+          QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.Qt6_DIR }}/plugins
+
+      - name: Package
+        run: |
+          cd target/i686-pc-windows-msvc/release
+          Compress-Archive -Path aeterna.exe -DestinationPath aeterna-x86-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aeterna-x86-windows
+          path: target/i686-pc-windows-msvc/release/aeterna-x86-windows.zip
+
+  # ── macOS Intel (x86_64) ──
+  macos-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6
+        run: |
+          brew update > /dev/null 2>&1
+          brew install qt@6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Build (release)
+        run: cargo build --release --target x86_64-apple-darwin
+        env:
+          CMAKE_PREFIX_PATH: $(brew --prefix qt@6)
+
+      - name: Package
+        run: |
+          cd target/x86_64-apple-darwin/release
+          tar czf aeterna-x86_64-macos.tar.gz aeterna
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aeterna-x86_64-macos
+          path: target/x86_64-apple-darwin/release/aeterna-x86_64-macos.tar.gz
+
+  # ── macOS Apple Silicon (arm64) ──
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6
+        run: |
+          brew update > /dev/null 2>&1
+          brew install qt@6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Build (release)
+        run: cargo build --release --target aarch64-apple-darwin
+        env:
+          CMAKE_PREFIX_PATH: $(brew --prefix qt@6)
+
+      - name: Package
+        run: |
+          cd target/aarch64-apple-darwin/release
+          tar czf aeterna-arm64-macos.tar.gz aeterna
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aeterna-arm64-macos
+          path: target/aarch64-apple-darwin/release/aeterna-arm64-macos.tar.gz
+
+  # ── Create Release ──
+  release:
+    needs:
+      - linux-x86_64
+      - linux-i686
+      - windows-x86_64
+      - windows-x86
+      - macos-x86_64
+      - macos-arm64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          ## Aeterna v${{ github.ref_name }}
+
+          ### 📦 Downloads
+
+          | Platform | Architecture | File |
+          |----------|-------------|------|
+          | Linux | x86_64 | aeterna-x86_64-linux.tar.gz |
+          | Linux | i686 | aeterna-i686-linux.tar.gz |
+          | Windows | x86_64 | aeterna-x86_64-windows.zip |
+          | Windows | x86 | aeterna-x86-windows.zip |
+          | macOS | Intel | aeterna-x86_64-macos.tar.gz |
+          | macOS | Apple Silicon | aeterna-arm64-macos.tar.gz |
+
+          ### 🚀 Install
+
+          **Linux**: Extract and run `./aeterna`
+          **Windows**: Extract and run `aeterna.exe`
+          **macOS**: Extract and run `./aeterna`
+
+          > Requires **Qt 6** runtime libraries on your system.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Aeterna ${{ github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/*/*.tar.gz
+            artifacts/*/*.zip

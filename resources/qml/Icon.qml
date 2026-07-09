@@ -1,0 +1,90 @@
+import QtQuick 2.15
+import "."
+// Qt6 把 QtGraphicalEffects 移到了 Qt5Compat 兼容层，使用 Qt5Compat.GraphicalEffects 替代
+import Qt5Compat.GraphicalEffects
+
+// =====================================================================
+// Aeterna Icon — SF Symbol style icon component
+// =====================================================================
+// Loads PNG icons from the qrc:/icons/ resource path and applies the
+// current theme tint color. Sizes follow 16/20/24 px scale.
+//
+// Usage:
+//   Icon { name: "house"; size: 20; tier: Icon.Primary }
+//   Icon { name: "magnifyingglass"; size: 16; tier: Icon.Secondary }
+//
+// `tier` controls the tint color from theme tokens:
+//   Primary   → Theme.foreground
+//   Secondary → Theme.mutedForeground
+//   Tertiary  → Theme.tertiaryLabel
+//   Accent    → Theme.primary
+//   Success   → Theme.success
+//   Warning   → Theme.warning
+//   Danger    → Theme.destructive
+// =====================================================================
+
+Item {
+    id: iconRoot
+
+    enum Tier { Primary, Secondary, Tertiary, Accent, Success, Warning, Danger }
+
+    property string name: "circle.fill"
+    property int size: 20
+    property int tier: Icon.Primary
+    property color overrideColor: "transparent"
+    property string accessibleName: name
+
+    Accessible.name: accessibleName
+
+    // Only 16/20/24 px assets are provided; snap requested size to the
+    // nearest available raster so icons never load a missing resource.
+    readonly property int effectiveSize: {
+        if (size <= 16) return 16;
+        if (size <= 20) return 20;
+        return 24;
+    }
+
+    width: effectiveSize
+    height: effectiveSize
+
+    // Backing source: the black silhouette loaded from qrc resources.
+    Image {
+        id: sourceImg
+        source: {
+            if (!iconRoot.name || iconRoot.name === "") return ""
+            return "qrc:/icons/" + iconRoot.name + "_" + iconRoot.effectiveSize + ".png"
+        }
+        sourceSize.width: iconRoot.effectiveSize
+        sourceSize.height: iconRoot.effectiveSize
+        smooth: true
+        mipmap: true
+        asynchronous: true
+        fillMode: Image.PreserveAspectFit
+        visible: false
+        anchors.fill: parent
+    }
+
+    // ColorOverlay from QtGraphicalEffects re-colors the source image
+    // using its alpha as a mask — perfect for tinting black SF Symbol
+    // silhouettes into any theme color.
+    ColorOverlay {
+        anchors.fill: sourceImg
+        source: sourceImg
+        color: {
+            if (iconRoot.overrideColor !== "transparent") return iconRoot.overrideColor;
+            switch (iconRoot.tier) {
+                case 0: return Theme.foreground
+                case 1: return Theme.mutedForeground
+                case 2: return Theme.tertiaryLabel
+                case 3: return Theme.primary
+                case 4: return Theme.success
+                case 5: return Theme.warning
+                case 6: return Theme.destructive
+                default: return Theme.foreground
+            }
+        }
+        Behavior on color {
+            ColorAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
+        }
+    }
+}

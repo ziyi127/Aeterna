@@ -1,0 +1,21 @@
+# ── Rust ──
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.trae/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Build artifacts ──
+*.o
+*.pyc

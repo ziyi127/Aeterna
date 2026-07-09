@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="Aeterna.jpeg">
-  <img src="Aeterna.jpeg" alt="Aeterna" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="[Aeterna.jpeg](https://github.com/ziyi127/Aeterna/blob/main/Aeterna.jpeg)">
+  <img src="[Aeterna.jpeg](https://github.com/ziyi127/Aeterna/blob/main/Aeterna.jpeg)" alt="Aeterna" width="100%">
 </picture>
 
 <div align="center">

@@ -9,9 +9,13 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ═══════════════════════════════════════════════
-  # Linux x86_64 – AppImage (self-contained)
+  # Linux x86_64 – portable tarball (+Qt)
   # ═══════════════════════════════════════════════
   linux-x86_64:
     runs-on: ubuntu-24.04
@@ -22,10 +26,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            qt6-base-dev qt6-declarative-dev \
+            qt6-base-dev qt6-declarative-dev libqt6sql6-mysql \
             libgl1-mesa-dev libxkbcommon-dev \
             libfontconfig1-dev librsvg2-bin \
-            file
+            patchelf file
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -35,67 +39,48 @@ jobs:
       - name: Build (release)
         run: cargo build --release --target x86_64-unknown-linux-gnu
 
-      - name: Bundle Qt libs into AppDir
+      - name: Bundle Qt libs
         run: |
           BINARY=target/x86_64-unknown-linux-gnu/release/aeterna
-          APPDIR=AppDir
-          mkdir -p "$APPDIR/usr/bin"
+          mkdir -p bundle/usr/bin bundle/usr/lib
 
-          cp "$BINARY" "$APPDIR/usr/bin/"
+          cp "$BINARY" bundle/usr/bin/
 
-          # Copy all Qt .so files the binary links against
-          mkdir -p "$APPDIR/usr/lib"
-          ldd "$APPDIR/usr/bin/aeterna" \
-            | grep -E "libQt|libicu" \
-            | awk '{print $3}' \
+          # Collect all linked .so (including Qt)
+          ldd "$BINARY" \
+            | awk '/=> \//{print $3}' \
             | while read lib; do
-                [ -n "$lib" ] && cp -n "$lib" "$APPDIR/usr/lib/" 2>/dev/null || true
+                [ -n "$lib" ] && cp -n "$lib" bundle/usr/lib/ 2>/dev/null || true
               done
 
-          # Also copy libqputhesis (the Qt PlatformTheme) if present
-          ldd "$APPDIR/usr/bin/aeterna" \
-            | awk '{print $3}' \
-            | while read lib; do
-                [ -n "$lib" ] && cp -n "$lib" "$APPDIR/usr/lib/" 2>/dev/null || true
-              done
-
-          # Copy Qt QML imports
-          QMLDIR=$(find /usr/lib /usr/lib64 -path "*/qt6/qml" -type d 2>/dev/null | head -1)
+          # Qt QML imports
+          QMLDIR=$(find /usr/lib /usr/lib64 -maxdepth 3 -path "*/qt6/qml" -type d 2>/dev/null | head -1)
           if [ -n "$QMLDIR" ]; then
-            mkdir -p "$APPDIR/usr/lib/qt6"
-            cp -r "$QMLDIR" "$APPDIR/usr/lib/qt6/qml"
+            mkdir -p bundle/usr/lib/qt6
+            cp -r "$QMLDIR" bundle/usr/lib/qt6/qml
           fi
 
-          # Copy Qt plugins (platforms, imageformats, styles, etc.)
-          PLUGINDIR=$(find /usr/lib /usr/lib64 -path "*/qt6/plugins" -type d 2>/dev/null | head -1)
+          # Qt plugins
+          PLUGINDIR=$(find /usr/lib /usr/lib64 -maxdepth 3 -path "*/qt6/plugins" -type d 2>/dev/null | head -1)
           if [ -n "$PLUGINDIR" ]; then
-            mkdir -p "$APPDIR/usr/lib/qt6"
-            cp -r "$PLUGINDIR" "$APPDIR/usr/lib/qt6/plugins"
+            mkdir -p bundle/usr/lib/qt6
+            cp -r "$PLUGINDIR" bundle/usr/lib/qt6/plugins
           fi
 
-      - name: Create qt.conf for bundle
-        run: |
-          cat > AppDir/usr/bin/qt.conf << 'EOF'
+          # qt.conf
+          cat > bundle/usr/bin/qt.conf << 'EOF'
           [Paths]
           Plugins = ../lib/qt6/plugins
           Imports = ../lib/qt6/qml
           Qml2Imports = ../lib/qt6/qml
           EOF
 
-      - name: Set RPATH
-        run: |
-          patchelf --set-rpath '$ORIGIN/../lib' AppDir/usr/bin/aeterna
-          # Also set rpath on Qt libs so plugin deps resolve
-          for lib in AppDir/usr/lib/*.so*; do
-            patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
-          done
+          # Set RPATH
+          patchelf --set-rpath '$ORIGIN/../lib' bundle/usr/bin/aeterna
 
-      - name: Package release tarball
+      - name: Package
         run: |
-          cd AppDir
-          tar czf ../aeterna-x86_64-linux.tar.gz .
-          cd ..
-          # Also upload raw binary for users who already have Qt
+          cd bundle && tar czf ../aeterna-x86_64-linux.tar.gz . && cd ..
           cp target/x86_64-unknown-linux-gnu/release/aeterna aeterna-x86_64-linux
 
       - uses: actions/upload-artifact@v4
@@ -113,15 +98,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt6
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: "6.8.*"
-          host: windows
-          target: desktop
-          arch: win64_msvc2022_64
-          modules: qtdeclarative
-          cache: true
+      - name: Install Qt6 (via aqt)
+        run: |
+          pip install aqtinstall
+          aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O D:\a\Qt
+          "Qt6_DIR=D:\a\Qt\6.8.3\msvc2022_64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "D:\a\Qt\6.8.3\msvc2022_64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -130,18 +112,21 @@ jobs:
 
       - name: Build (release)
         run: cargo build --release --target x86_64-pc-windows-msvc
+        shell: pwsh
         env:
-          Qt6_DIR: ${{ env.Qt6_DIR }}
-          QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.Qt6_DIR }}/plugins
+          Qt6_DIR: D:\a\Qt\6.8.3\msvc2022_64
 
       - name: Bundle with windeployqt
         run: |
-          $ext = if ($env:Qt6_DIR) { Join-Path $env:Qt6_DIR "bin" } else { "" }
           windeployqt.exe --qmldir resources/qml target\x86_64-pc-windows-msvc\release\aeterna.exe
+        shell: pwsh
+        env:
+          Qt6_DIR: D:\a\Qt\6.8.3\msvc2022_64
 
       - name: Package (zip)
         run: |
           Compress-Archive -Path target\x86_64-pc-windows-msvc\release\* -DestinationPath aeterna-x86_64-windows.zip
+        shell: pwsh
 
       - uses: actions/upload-artifact@v4
         with:
@@ -174,9 +159,9 @@ jobs:
         run: |
           mkdir -p aeterna.app/Contents/MacOS
           cp target/x86_64-apple-darwin/release/aeterna aeterna.app/Contents/MacOS/
-          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -qmldir=resources/qml
+          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -verbose=1 -qmldir=resources/qml
 
-      - name: Package (zip)
+      - name: Package
         run: zip -r aeterna-x86_64-macos.zip aeterna.app
 
       - uses: actions/upload-artifact@v4
@@ -210,9 +195,9 @@ jobs:
         run: |
           mkdir -p aeterna.app/Contents/MacOS
           cp target/aarch64-apple-darwin/release/aeterna aeterna.app/Contents/MacOS/
-          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -qmldir=resources/qml
+          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -verbose=1 -qmldir=resources/qml
 
-      - name: Package (zip)
+      - name: Package
         run: zip -r aeterna-arm64-macos.zip aeterna.app
 
       - uses: actions/upload-artifact@v4
@@ -245,17 +230,19 @@ jobs:
 
           ### 📦 Downloads
 
-          | Platform | Architecture | File |
-          |----------|-------------|------|
-          | Linux | x86_64 (portable) | aeterna-x86_64-linux.tar.gz |
-          | Linux | x86_64 (raw) | aeterna-x86_64-linux |
-          | Windows | x86_64 | aeterna-x86_64-windows.zip |
-          | macOS | Intel | aeterna-x86_64-macos.zip |
-          | macOS | Apple Silicon | aeterna-arm64-macos.zip |
+          | Platform | File |
+          |----------|------|
+          | Linux x86_64 (portable) | `aeterna-x86_64-linux.tar.gz` |
+          | Linux x86_64 (standalone) | `aeterna-x86_64-linux` |
+          | Windows x86_64 | `aeterna-x86_64-windows.zip` |
+          | macOS Intel | `aeterna-x86_64-macos.zip` |
+          | macOS Apple Silicon | `aeterna-arm64-macos.zip` |
 
-          > **Linux**: Extract `aeterna-x86_64-linux.tar.gz` — includes Qt runtime.\
-          > **Windows**: Extract `aeterna-x86_64-windows.zip` and run `aeterna.exe`.\
-          > **macOS**: Extract `*-macos.zip` and open `aeterna.app`.
+          ---
+
+          **Linux**: Extract `aeterna-x86_64-linux.tar.gz` — includes Qt runtime.
+          **Windows**: Extract `aeterna-x86_64-windows.zip`, run `aeterna.exe`.
+          **macOS**: Extract `*-macos.zip`, open `aeterna.app`.
           EOF
 
       - name: Create Release

@@ -59,25 +59,34 @@ impl SingleInstanceLock {
     fn acquire_in(lock_dir: &std::path::Path) -> Option<Self> {
         let lock_file = lock_dir.join("aeterna.lock");
 
-        // 检查是否存在有效的锁文件
+        // 如果锁文件存在，检查进程是否存活
         if lock_file.exists() {
-            if let Ok(content) = std::fs::read_to_string(&lock_file) {
-                let pid: i32 = content.trim().parse().unwrap_or(0);
-                if pid > 0 && is_process_running(pid) {
-                    ::log::warn!(
-                        "Another instance is already running (PID: {}). Focusing existing window.",
-                        pid
-                    );
-                    // 尝试聚焦已有窗口
-                    focus_existing_window();
-                    return None;
-                } else {
-                    ::log::info!(
-                        "Stale lock file found (PID: {}), removing and re-acquiring",
-                        pid
-                    );
-                    let _ = std::fs::remove_file(&lock_file);
+            let stale = match std::fs::read_to_string(&lock_file) {
+                Ok(content) => {
+                    let pid: i32 = content.trim().parse().unwrap_or(0);
+                    if pid > 0 && is_process_running(pid) {
+                        false    // 进程存活，锁有效
+                    } else {
+                        true     // 进程已死，锁过期
+                    }
                 }
+                Err(_) => true,  // 无法读取，视为过期
+            };
+
+            if stale {
+                ::log::info!("Removing stale lock file");
+                let _ = std::fs::remove_file(&lock_file);
+            } else {
+                // 真正的另一个实例在运行
+                if let Ok(content) = std::fs::read_to_string(&lock_file) {
+                    let pid: i32 = content.trim().parse().unwrap_or(0);
+                    ::log::warn!(
+                        "Another instance is already running (PID: {}).",
+                        pid
+                    );
+                }
+                focus_existing_window();
+                return None;
             }
         }
 

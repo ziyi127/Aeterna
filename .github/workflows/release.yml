@@ -137,41 +137,11 @@ jobs:
           path: aeterna-x86_64-windows.zip
 
   # ═══════════════════════════════════════════════
-  # macOS Intel (x86_64)
+  # macOS Intel (x86_64) — commented out (no macos-13 runner available)
   # ═══════════════════════════════════════════════
-  macos-x86_64:
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Qt6
-        run: |
-          brew untap aws/tap 2>/dev/null || true
-          brew update > /dev/null 2>&1
-          brew install qt@6
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix qt@6)" >> $GITHUB_ENV
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-
-      - name: Build (release)
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: Bundle with macdeployqt
-        run: |
-          mkdir -p aeterna.app/Contents/MacOS
-          cp target/x86_64-apple-darwin/release/aeterna aeterna.app/Contents/MacOS/
-          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -verbose=1 -qmldir=resources/qml
-
-      - name: Package
-        run: zip -r aeterna-x86_64-macos.zip aeterna.app
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: aeterna-x86_64-macos
-          path: aeterna-x86_64-macos.zip
+  # macos-x86_64:
+  #   runs-on: macos-13
+  #   ...
 
   # ═══════════════════════════════════════════════
   # macOS Apple Silicon (arm64)
@@ -218,7 +188,6 @@ jobs:
     needs:
       - linux-x86_64
       - windows-x86_64
-      - macos-x86_64
       - macos-arm64
     runs-on: ubuntu-24.04
     permissions:
@@ -240,7 +209,6 @@ jobs:
           | Linux x86_64 (portable) | `aeterna-x86_64-linux.tar.gz` |
           | Linux x86_64 (standalone) | `aeterna-x86_64-linux` |
           | Windows x86_64 | `aeterna-x86_64-windows.zip` |
-          | macOS Intel | `aeterna-x86_64-macos.zip` |
           | macOS Apple Silicon | `aeterna-arm64-macos.zip` |
 
           ---

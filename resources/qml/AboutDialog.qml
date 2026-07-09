@@ -122,6 +122,7 @@ Dialog {
             }
 
             Text {
+                id: authorLink
                 text: '<a href="https://github.com/ziyi127" style="color: ' + Theme.brand500 + '; text-decoration: none;">ziyi127</a>'
                 textFormat: Text.RichText
                 color: Theme.brand500
@@ -129,9 +130,13 @@ Dialog {
                 font.pixelSize: Theme.typeSubhead
                 font.weight: Theme.weightMedium
                 Layout.alignment: Qt.AlignHCenter
-                cursorShape: Qt.PointingHandCursor
                 onLinkActivated: Qt.openUrlExternally(link)
-                hoverEnabled: true
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    acceptedButtons: Qt.NoButton
+                }
             }
         }
 

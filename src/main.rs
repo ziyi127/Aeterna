@@ -21,11 +21,11 @@ fn main() {
     env_logger::init();
     ::log::info!("Aeterna v{} starting...", env!("CARGO_PKG_VERSION"));
 
-    // ── UI Access: 在 QML 引擎启动前检查并获取 UIAccess 权限 ──
-    // 参考 uiaccess-master 项目原理：
-    // 如果用户在设置中启用了 UI Access，则尝试获取 UIAccess 权限。
-    // 成功时进程会以新令牌重启，旧进程退出，新进程继承所有设置。
-    // 仅在 Windows 平台有效。
+    // 解析命令行参数
+    let args: Vec<String> = std::env::args().collect();
+    let force_mode = args.iter().any(|a| a == "--force" || a == "-f");
+
+    // ── UI Access ──
     if is_ui_access_enabled() {
         ::log::info!("UI Access is enabled in settings, attempting to acquire...");
         unsafe {
@@ -44,8 +44,14 @@ fn main() {
     resources();
     ::log::info!("Qt resources registered");
 
-    let _lock = window_manager::SingleInstanceLock::acquire();
+    let _lock = window_manager::SingleInstanceLock::acquire(force_mode);
     if _lock.is_none() {
+        eprintln!(
+            "❌ Aeterna 已在运行中，本次启动已退出。\n\
+             请检查系统托盘或任务栏中已有的 Aeterna 窗口。\n\
+             使用 --force 参数可强制启动新实例。"
+        );
+        window_manager::notify_already_running();
         return;
     }
     ::log::info!("Single instance lock acquired");

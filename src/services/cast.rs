@@ -306,19 +306,22 @@ impl Drop for CastService {
 }
 
 fn get_hostname() -> String {
-    let mut buf = [0u8; 256];
-    let result = unsafe {
-        libc::gethostname(
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
-        )
-    };
-    if result != 0 {
-        return "Aeterna.local.".to_string();
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        let result = unsafe {
+            libc::gethostname(
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+            )
+        };
+        if result == 0 {
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            let hostname = String::from_utf8_lossy(&buf[..end]).to_string();
+            return format!("{}.local.", hostname);
+        }
     }
-    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    let hostname = String::from_utf8_lossy(&buf[..end]).to_string();
-    format!("{}.local.", hostname)
+    "Aeterna.local.".to_string()
 }
 
 #[cfg(test)]

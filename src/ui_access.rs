@@ -11,9 +11,6 @@
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-
     // ── Win32 类型别名 ──
     type BOOL = i32;
     type DWORD = u32;
@@ -193,20 +190,6 @@ mod windows_impl {
     /// 检查当前进程是否具有 UIAccess 权限
     unsafe fn check_for_ui_access() -> (bool, DWORD) {
         let mut h_token: HANDLE = std::ptr::null_mut();
-        if OpenProcessToken(
-            std::process::Command::new("").as_std().as_ptr() as HANDLE, // 实际用 GetCurrentProcess
-            TOKEN_QUERY,
-            &mut h_token,
-        ) == 0
-        {
-            return (false, GetLastError());
-        }
-
-        // GetCurrentProcess() 伪句柄
-        // 上面用错了，实际应该用 -1 (GetCurrentProcess)
-        // 重新获取
-        CloseHandle(h_token);
-        h_token = std::ptr::null_mut();
 
         let current_process: HANDLE = -1isize as HANDLE; // GetCurrentProcess()
         if OpenProcessToken(current_process, TOKEN_QUERY, &mut h_token) == 0 {

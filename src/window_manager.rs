@@ -41,7 +41,8 @@ impl SingleInstanceLock {
     /// 尝试获取单实例锁
     ///
     /// 返回 Some(lock) 如果成功获取锁，None 如果已有实例在运行。
-    pub fn acquire() -> Option<Self> {
+    /// 若 `force` 为 true，则无视已有锁文件，强制用当前进程覆盖它。
+    pub fn acquire(force: bool) -> Option<Self> {
         let lock_dir = aeterna_config_dir();
 
         // 确保目录存在
@@ -50,24 +51,39 @@ impl SingleInstanceLock {
             // 如果创建失败，回退到临时目录
             let temp_dir = std::env::temp_dir().join("Aeterna");
             let _ = std::fs::create_dir_all(&temp_dir);
-            return Self::acquire_in(&temp_dir);
+            return Self::acquire_in(&temp_dir, force);
         }
 
-        Self::acquire_in(&lock_dir)
+        Self::acquire_in(&lock_dir, force)
     }
 
-    fn acquire_in(lock_dir: &std::path::Path) -> Option<Self> {
+    fn acquire_in(lock_dir: &std::path::Path, force: bool) -> Option<Self> {
         let lock_file = lock_dir.join("aeterna.lock");
+        let current_exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| String::from("aeterna"));
 
-        // 如果锁文件存在，检查进程是否存活
-        if lock_file.exists() {
+        // 如果锁文件存在，检查进程是否存活（force 模式下跳过）
+        if lock_file.exists() && !force {
             let stale = match std::fs::read_to_string(&lock_file) {
                 Ok(content) => {
-                    let pid: i32 = content.trim().parse().unwrap_or(0);
-                    if pid > 0 && is_process_running(pid) {
-                        false    // 进程存活，锁有效
+                    let (pid, lock_exe) = parse_lock_content(&content);
+                    if pid > 0 && is_process_running(pid, &lock_exe) {
+                        // 进程存活且路径匹配，锁有效
+                        ::log::warn!(
+                            "Another instance is already running (PID: {}, path: {})",
+                            pid, lock_exe
+                        );
+                        false
                     } else {
-                        true     // 进程已死，锁过期
+                        // 进程已死或路径不匹配，锁过期
+                        if pid > 0 {
+                            ::log::info!(
+                                "Stale lock detected (PID: {} no longer running or path mismatch)",
+                                pid
+                            );
+                        }
+                        true
                     }
                 }
                 Err(_) => true,  // 无法读取，视为过期
@@ -78,19 +94,19 @@ impl SingleInstanceLock {
                 let _ = std::fs::remove_file(&lock_file);
             } else {
                 // 真正的另一个实例在运行
-                if let Ok(content) = std::fs::read_to_string(&lock_file) {
-                    let pid: i32 = content.trim().parse().unwrap_or(0);
-                    ::log::warn!(
-                        "Another instance is already running (PID: {}).",
-                        pid
-                    );
-                }
                 focus_existing_window();
                 return None;
             }
         }
 
-        // 创建新的锁文件
+        // force 模式：无视已有锁文件，强行覆盖
+        if force && lock_file.exists() {
+            ::log::warn!("Force mode: overwriting existing lock file");
+            eprintln!("⚠ 强制启动模式：无视已有锁文件");
+            let _ = std::fs::remove_file(&lock_file);
+        }
+
+        // 创建新的锁文件，记录 PID 和可执行文件路径
         match std::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -99,20 +115,17 @@ impl SingleInstanceLock {
         {
             Ok(mut file) => {
                 let pid = std::process::id();
-                // 尝试写入 PID
                 use std::io::Write;
-                if writeln!(file, "{}", pid).is_err() {
+                // 新格式：第一行 PID，第二行 exe 路径
+                let lock_content = format!("{}\n{}", pid, current_exe);
+                if writeln!(file, "{}", lock_content).is_err() {
                     ::log::error!("Failed to write PID to lock file");
-                    // 即使写入失败，我们仍然认为我们持有锁（继续运行）
                 }
-                ::log::info!("Single instance lock acquired (PID: {})", pid);
-                Some(SingleInstanceLock {
-                    lock_file,
-                })
+                ::log::info!("Single instance lock acquired (PID: {}, path: {})", pid, current_exe);
+                Some(SingleInstanceLock { lock_file })
             }
             Err(e) => {
                 ::log::warn!("Failed to create lock file: {} -> continuing without lock", e);
-                // 创建失败仍然继续运行（不阻止用户打开）
                 Some(SingleInstanceLock {
                     lock_file: lock_dir.join("aeterna.lock"),
                 })
@@ -136,21 +149,116 @@ impl Drop for SingleInstanceLock {
     }
 }
 
-/// 检查进程是否仍在运行
-fn is_process_running(pid: i32) -> bool {
+/// 解析锁文件内容。
+///
+/// 新格式：第一行 PID，第二行 exe 路径
+/// 旧格式：仅一行 PID（兼容旧版本锁文件）
+fn parse_lock_content(content: &str) -> (i32, String) {
+    let mut lines = content.lines();
+    let pid: i32 = lines
+        .next()
+        .unwrap_or("0")
+        .trim()
+        .parse()
+        .unwrap_or(0);
+    let exe = lines
+        .next()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    (pid, exe)
+}
+
+/// 检查进程是否仍在运行，并验证可执行文件路径匹配。
+///
+/// 在 Linux 上检查 /proc/<pid> 是否存在，如果锁文件中记录了
+/// 可执行文件路径，则还会验证 /proc/<pid>/exe 指向的目标
+/// 是否与记录一致，防止 PID 重用导致的误判。
+fn is_process_running(pid: i32, lock_exe: &str) -> bool {
     if pid <= 0 {
         return false;
     }
-    // 在 Linux 上检查 /proc/<pid> 是否存在
     let proc_path = format!("/proc/{}", pid);
-    std::path::Path::new(&proc_path).exists()
+    if !std::path::Path::new(&proc_path).exists() {
+        return false;
+    }
+    // 如果锁文件记录了 exe 路径，验证是否匹配
+    if !lock_exe.is_empty() {
+        let exe_link = format!("/proc/{}/exe", pid);
+        if let Ok(target) = std::fs::read_link(&exe_link) {
+            let target_str = target.to_string_lossy();
+            if target_str != lock_exe {
+                ::log::info!(
+                    "PID {} path mismatch: lock says '{}', but /proc/{}/exe -> '{}'",
+                    pid, lock_exe, pid, target_str
+                );
+                return false;
+            }
+        }
+        // 如果无法读取 /proc/pid/exe（权限不足等），保守认为进程存在
+    }
+    true
 }
 
-/// 尝试聚焦已有窗口（平台特定）
+/// 聚焦已有实例的窗口。
+///
+/// 在 Linux 上尝试使用 xdotool 搜索并激活窗口，
+/// 同时发送桌面通知告知用户应用已在运行。
 fn focus_existing_window() {
-    // 在 Linux 上，我们可以使用 xdotool 或 wmctrl
-    // 这里使用简单的日志记录，实际聚焦由系统托盘或窗口管理器处理
     ::log::info!("Attempting to focus existing window");
+
+    #[cfg(target_os = "linux")]
+    {
+        // 尝试用 xdotool 按窗口类名搜索并聚焦
+        let result = std::process::Command::new("xdotool")
+            .args(["search", "--class", "aeterna", "windowactivate"])
+            .output();
+
+        match &result {
+            Ok(output) if output.status.success() => {
+                ::log::info!("Successfully focused existing window via xdotool");
+                return;
+            }
+            Ok(output) => {
+                ::log::debug!(
+                    "xdotool search --class failed (exit {:?}), trying --name",
+                    output.status.code()
+                );
+            }
+            Err(e) => {
+                ::log::debug!("xdotool not available: {}", e);
+            }
+        }
+
+        // fallback: 按窗口标题搜索
+        let result = std::process::Command::new("xdotool")
+            .args(["search", "--name", "Aeterna", "windowactivate"])
+            .output();
+
+        if let Ok(output) = &result {
+            if output.status.success() {
+                ::log::info!("Successfully focused existing window via xdotool (name)");
+                return;
+            }
+        }
+    }
+
+    ::log::warn!("Could not focus existing window — xdotool unavailable or window not found");
+}
+
+/// 发送桌面通知，告知用户 Aeterna 已在运行。
+pub fn notify_already_running() {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("notify-send")
+            .args([
+                "Aeterna",
+                "Aeterna 已在运行中",
+                "--icon=aeterna",
+                "--app-name=Aeterna",
+                "--hint=string:desktop-entry:aeterna",
+            ])
+            .spawn();
+    }
 }
 
 lazy_static::lazy_static! {

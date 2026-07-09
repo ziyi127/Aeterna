@@ -1,5 +1,8 @@
+<div align="center">
+
 ![Aeterna](https://raw.githubusercontent.com/ziyi127/Aeterna/main/Aeterna.jpeg)
-#  Aeterna
+
+# Aeterna
 
 **下一代跨平台桌面播放器 · Rust + Qt6 原生构建**
 

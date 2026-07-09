@@ -1,11 +1,8 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="Aeterna.jpeg">
-  <img src="Aeterna.jpeg" alt="Aeterna" width="100%">
-</picture>
-
 <div align="center">
 
-# 🎵 Aeterna
+![Aeterna](https://raw.githubusercontent.com/ziyi127/Aeterna/main/Aeterna.jpeg)
+
+# Aeterna
 
 **下一代跨平台桌面播放器 · Rust + Qt6 原生构建**
 

@@ -2,13 +2,12 @@
 //!
 //! 使用手动解析 NTP 协议实现时间同步，支持多服务器配置和偏移量计算。
 
+use log::{error, info, warn};
 use std::sync::Mutex;
 use std::time::Duration;
-use log::{info, warn, error};
 
 /// NTP 时间同步状态
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum NtpSyncStatus {
     Idle,
     Syncing,
@@ -27,7 +26,6 @@ pub struct NtpSyncResult {
 
 /// NTP 客户端配置
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct NtpConfig {
     pub servers: Vec<String>,
     pub timeout: Duration,
@@ -37,10 +35,7 @@ pub struct NtpConfig {
 impl Default for NtpConfig {
     fn default() -> Self {
         NtpConfig {
-            servers: vec![
-                "ntp.aliyun.com".to_string(),
-                "pool.ntp.org".to_string(),
-            ],
+            servers: vec!["ntp.aliyun.com".to_string(), "pool.ntp.org".to_string()],
             timeout: Duration::from_secs(5),
             port: 123,
         }
@@ -68,7 +63,6 @@ impl NtpService {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_servers(&self, servers: Vec<String>) {
         if let Ok(mut config) = self.config.lock() {
             config.servers = servers;
@@ -92,7 +86,7 @@ impl NtpService {
 
         for server in &config.servers {
             info!("Attempting NTP sync with server: {}", server);
-            
+
             match self.sync_with_server(server, config.timeout) {
                 Ok(result) => {
                     info!(
@@ -123,11 +117,7 @@ impl NtpService {
         result
     }
 
-    fn sync_with_server(
-        &self,
-        server: &str,
-        timeout: Duration,
-    ) -> Result<NtpSyncResult, String> {
+    fn sync_with_server(&self, server: &str, timeout: Duration) -> Result<NtpSyncResult, String> {
         use std::net::ToSocketAddrs;
 
         let addr_str = format!("{}:123", server);
@@ -186,12 +176,10 @@ impl NtpService {
         })
     }
 
-    #[allow(dead_code)]
     pub fn last_result(&self) -> Option<NtpSyncResult> {
         self.last_result.lock().ok()?.clone()
     }
 
-    #[allow(dead_code)]
     pub fn offset_ms(&self) -> Option<i64> {
         self.last_result()
             .filter(|r| r.status == NtpSyncStatus::Synced)

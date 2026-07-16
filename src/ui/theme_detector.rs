@@ -89,9 +89,12 @@ impl ThemeDetector {
         // 方案 4：尝试 KDE 的 kreadconfig5
         if let Ok(output) = Command::new("kreadconfig5")
             .args([
-                "--file", "kdeglobals",
-                "--group", "General",
-                "--key", "ColorScheme",
+                "--file",
+                "kdeglobals",
+                "--group",
+                "General",
+                "--key",
+                "ColorScheme",
             ])
             .output()
         {

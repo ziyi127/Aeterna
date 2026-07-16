@@ -1,12 +1,13 @@
 //! 窗口管理器 — 多窗口管理和 Deep Link 协议处理。
 //!
-//! WindowManager is a planned future feature, hence `#[allow(dead_code)]`.
+//! WindowManager 和 DeepLinkHandler 是规划中的功能，目前主要由测试
+//! 驱动；外部仅 `DeepLinkHandler::register_protocol()` 在 main.rs 中被调用。
 #![allow(dead_code)]
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::path::PathBuf;
 use crate::core::utils::aeterna_config_dir;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 
 /// 窗口信息
 #[derive(Debug, Clone)]
@@ -47,7 +48,10 @@ impl SingleInstanceLock {
 
         // 确保目录存在
         if let Err(e) = std::fs::create_dir_all(&lock_dir) {
-            ::log::warn!("Failed to create lock directory: {} -> using temp directory", e);
+            ::log::warn!(
+                "Failed to create lock directory: {} -> using temp directory",
+                e
+            );
             // 如果创建失败，回退到临时目录
             let temp_dir = std::env::temp_dir().join("Aeterna");
             let _ = std::fs::create_dir_all(&temp_dir);
@@ -72,7 +76,8 @@ impl SingleInstanceLock {
                         // 进程存活且路径匹配，锁有效
                         ::log::warn!(
                             "Another instance is already running (PID: {}, path: {})",
-                            pid, lock_exe
+                            pid,
+                            lock_exe
                         );
                         false
                     } else {
@@ -86,7 +91,7 @@ impl SingleInstanceLock {
                         true
                     }
                 }
-                Err(_) => true,  // 无法读取，视为过期
+                Err(_) => true, // 无法读取，视为过期
             };
 
             if stale {
@@ -121,11 +126,18 @@ impl SingleInstanceLock {
                 if writeln!(file, "{}", lock_content).is_err() {
                     ::log::error!("Failed to write PID to lock file");
                 }
-                ::log::info!("Single instance lock acquired (PID: {}, path: {})", pid, current_exe);
+                ::log::info!(
+                    "Single instance lock acquired (PID: {}, path: {})",
+                    pid,
+                    current_exe
+                );
                 Some(SingleInstanceLock { lock_file })
             }
             Err(e) => {
-                ::log::warn!("Failed to create lock file: {} -> continuing without lock", e);
+                ::log::warn!(
+                    "Failed to create lock file: {} -> continuing without lock",
+                    e
+                );
                 Some(SingleInstanceLock {
                     lock_file: lock_dir.join("aeterna.lock"),
                 })
@@ -134,7 +146,6 @@ impl SingleInstanceLock {
     }
 
     /// 检查锁是否仍然有效
-    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         self.lock_file.exists()
     }
@@ -155,12 +166,7 @@ impl Drop for SingleInstanceLock {
 /// 旧格式：仅一行 PID（兼容旧版本锁文件）
 fn parse_lock_content(content: &str) -> (i32, String) {
     let mut lines = content.lines();
-    let pid: i32 = lines
-        .next()
-        .unwrap_or("0")
-        .trim()
-        .parse()
-        .unwrap_or(0);
+    let pid: i32 = lines.next().unwrap_or("0").trim().parse().unwrap_or(0);
     let exe = lines
         .next()
         .map(|s| s.trim().to_string())
@@ -189,7 +195,10 @@ fn is_process_running(pid: i32, lock_exe: &str) -> bool {
             if target_str != lock_exe {
                 ::log::info!(
                     "PID {} path mismatch: lock says '{}', but /proc/{}/exe -> '{}'",
-                    pid, lock_exe, pid, target_str
+                    pid,
+                    lock_exe,
+                    pid,
+                    target_str
                 );
                 return false;
             }
@@ -261,17 +270,15 @@ pub fn notify_already_running() {
     }
 }
 
-lazy_static::lazy_static! {
-    /// 全局待处理的 Deep Link 动作。
-    ///
-    /// 用于在 Rust 与 QML 之间传递 deep link 动作。由于 deep link 可能在
-    /// QML 加载前到达，先存入此全局变量，后续由 QML/Rust 通过
-    /// `take_pending_deep_link` 读取并消费。
-    pub static ref PENDING_DEEP_LINK: Mutex<Option<DeepLinkAction>> = Mutex::new(None);
-}
+/// 全局待处理的 Deep Link 动作。
+///
+/// 用于在 Rust 与 QML 之间传递 deep link 动作。由于 deep link 可能在
+/// QML 加载前到达，先存入此全局变量，后续由 QML/Rust 通过
+/// `take_pending_deep_link` 读取并消费。
+pub static PENDING_DEEP_LINK: LazyLock<Mutex<Option<DeepLinkAction>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// 取出并清空当前待处理的 Deep Link 动作。
-#[allow(dead_code)]
 pub fn take_pending_deep_link() -> Option<DeepLinkAction> {
     PENDING_DEEP_LINK.lock().unwrap().take()
 }
@@ -390,10 +397,7 @@ impl DeepLinkHandler {
 
         match action {
             "open" => {
-                let file_path = query_params
-                    .get("file")
-                    .cloned()
-                    .unwrap_or_default();
+                let file_path = query_params.get("file").cloned().unwrap_or_default();
                 DeepLinkAction::OpenFile(file_path)
             }
             "player" => DeepLinkAction::StartPlayer,
@@ -406,10 +410,7 @@ impl DeepLinkHandler {
             }
             "editor" => DeepLinkAction::OpenEditor,
             "cast" => {
-                let device = query_params
-                    .get("device")
-                    .cloned()
-                    .unwrap_or_default();
+                let device = query_params.get("device").cloned().unwrap_or_default();
                 DeepLinkAction::CastTo(device)
             }
             _ => DeepLinkAction::Unknown(url.to_string()),
@@ -588,9 +589,7 @@ impl Default for WindowManager {
     }
 }
 
-lazy_static::lazy_static! {
-    pub static ref WINDOW_MANAGER: WindowManager = WindowManager::new();
-}
+pub static WINDOW_MANAGER: LazyLock<WindowManager> = LazyLock::new(WindowManager::new);
 
 #[cfg(test)]
 mod tests {
@@ -655,7 +654,10 @@ mod tests {
     #[test]
     fn test_deep_link_parse_open() {
         let action = DeepLinkHandler::parse_url("aeterna://open?file=/path/to/config.aeterna");
-        assert_eq!(action, DeepLinkAction::OpenFile("/path/to/config.aeterna".to_string()));
+        assert_eq!(
+            action,
+            DeepLinkAction::OpenFile("/path/to/config.aeterna".to_string())
+        );
     }
 
     #[test]

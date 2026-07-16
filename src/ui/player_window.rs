@@ -1,16 +1,16 @@
 #![allow(non_snake_case)]
 
-use qmetaobject::*;
+use crate::core::parser;
 use crate::core::player::PlayerCore;
 use crate::core::types::ExamConfig;
-use crate::core::parser;
 use crate::core::utils::parse_date_time_ms;
 use crate::core::utils::{aeterna_config_dir, strip_file_prefix};
-use crate::services::ntp::{NtpService, NtpConfig, NtpSyncStatus};
+use crate::services::ntp::{NtpConfig, NtpService, NtpSyncStatus};
+use chrono::{Local, TimeZone};
+use qmetaobject::*;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use chrono::{Local, TimeZone};
 
 /// Player backend — bridges PlayerCore state to QML properties.
 ///
@@ -140,7 +140,11 @@ pub struct PlayerBackend {
 impl PlayerBackend {
     fn current_time(&self) -> QString {
         let now_ms = self.corrected_now_ms();
-        let fmt = if self.show_seconds() { "%H:%M:%S" } else { "%H:%M" };
+        let fmt = if self.show_seconds() {
+            "%H:%M:%S"
+        } else {
+            "%H:%M"
+        };
         let text = Local
             .timestamp_millis_opt(now_ms)
             .single()
@@ -307,7 +311,11 @@ impl PlayerBackend {
 
     fn big_clock_font_size(&self) -> f64 {
         let v = *self._big_clock_font_size.lock().unwrap();
-        if v < 48.0 { 196.0 } else { v }
+        if v < 48.0 {
+            196.0
+        } else {
+            v
+        }
     }
 
     fn large_info_font(&self) -> bool {
@@ -455,10 +463,7 @@ impl PlayerBackend {
             }
         }
         // 返回默认服务器列表
-        vec![
-            "ntp.aliyun.com".to_string(),
-            "pool.ntp.org".to_string(),
-        ]
+        vec!["ntp.aliyun.com".to_string(), "pool.ntp.org".to_string()]
     }
 
     fn saveRoomNumber(&self, room: QString) -> bool {
@@ -917,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_build_formatted_exam_list_status() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "".to_string(),
             exam_infos: vec![
@@ -927,6 +932,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "数学".to_string(),
@@ -934,9 +941,12 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
 
         // 09:00，语文进行中，数学未开始
         let now = parse_date_time("2025-06-15 09:00:00")
@@ -953,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_build_formatted_exam_list_completed() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "".to_string(),
             exam_infos: vec![ExamInfo {
@@ -962,8 +972,11 @@ mod tests {
                 end: "2025-06-15 10:00:00".to_string(),
                 alert_time: 5,
                 materials: None,
+                start_ts: 0,
+                end_ts: 0,
             }],
         };
+        config.cache_timestamps();
 
         let now = parse_date_time("2025-06-15 11:00:00")
             .unwrap()
@@ -977,7 +990,7 @@ mod tests {
 
     #[test]
     fn test_build_formatted_exam_list_time_range() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "".to_string(),
             exam_infos: vec![ExamInfo {
@@ -986,8 +999,11 @@ mod tests {
                 end: "2025-06-15 10:00:00".to_string(),
                 alert_time: 5,
                 materials: None,
+                start_ts: 0,
+                end_ts: 0,
             }],
         };
+        config.cache_timestamps();
 
         let now = parse_date_time("2025-06-15 07:00:00")
             .unwrap()
@@ -999,7 +1015,7 @@ mod tests {
 
     #[test]
     fn test_build_formatted_exam_list_date_dedup() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "".to_string(),
             exam_infos: vec![
@@ -1009,6 +1025,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "数学".to_string(),
@@ -1016,9 +1034,12 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
 
         let now = parse_date_time("2025-06-15 07:00:00")
             .unwrap()

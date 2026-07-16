@@ -7,11 +7,11 @@ pub fn register_types(engine: &mut QmlEngine) {
 
 #[allow(dead_code)]
 mod ui_backend {
-    use qmetaobject::*;
-    use std::sync::Mutex;
     use crate::core::parser;
     use crate::core::types::ExamConfig;
     use crate::core::utils::aeterna_config_dir;
+    use qmetaobject::*;
+    use std::sync::Mutex;
 
     /// 应用信息后端
     #[derive(QObject, Default)]
@@ -105,7 +105,9 @@ mod ui_backend {
         }
 
         fn exam_count(&self) -> i32 {
-            self._config.lock().unwrap()
+            self._config
+                .lock()
+                .unwrap()
                 .as_ref()
                 .map(|c| c.exam_infos.len() as i32)
                 .unwrap_or(0)
@@ -149,7 +151,8 @@ mod ui_backend {
             ($ty:ty, $name:literal) => {
                 qml_register_type::<$ty>(
                     &std::ffi::CString::new("Aeterna").unwrap(),
-                    1, 0,
+                    1,
+                    0,
                     &std::ffi::CString::new($name).unwrap(),
                 );
             };
@@ -159,10 +162,16 @@ mod ui_backend {
         register!(NavigationManager, "NavigationManager");
         register!(ConfigManager, "ConfigManager");
         register!(RecentFilesModel, "RecentFilesModel");
-        register!(crate::ui::discover_manager::DiscoverManager, "DiscoverManager");
+        register!(
+            crate::ui::discover_manager::DiscoverManager,
+            "DiscoverManager"
+        );
         register!(crate::ui::player_window::PlayerBackend, "PlayerBackend");
         register!(crate::ui::editor_window::EditorBackend, "EditorBackend");
         register!(crate::ui::theme_detector::ThemeDetector, "ThemeDetector");
-        register!(crate::ui::settings_window::SettingsBackend, "SettingsBackend");
+        register!(
+            crate::ui::settings_window::SettingsBackend,
+            "SettingsBackend"
+        );
     }
 }

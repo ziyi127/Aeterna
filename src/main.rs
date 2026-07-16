@@ -1,11 +1,11 @@
 #![allow(non_snake_case)]
 
 mod core;
-mod ui;
-mod services;
 mod plugins;
-mod window_manager;
+mod services;
+mod ui;
 mod ui_access;
+mod window_manager;
 
 use qmetaobject::*;
 use std::sync::Arc;
@@ -60,34 +60,34 @@ fn main() {
         ::log::warn!("Failed to register protocol handler: {}", e);
     }
 
+    // ── Shared tokio runtime ──
+    // 所有异步服务（HTTP API, Cast）共用同一个 multi-thread runtime，
+    // 避免多个独立 runtime 竞争系统线程。
+    let shared_rt =
+        Arc::new(tokio::runtime::Runtime::new().expect("Failed to create shared tokio runtime"));
+
     // ── Start HTTP API server in background ──
     let api_service = Arc::new(services::http_api::HttpApiService::new());
-    let api_service_clone = api_service.clone();
-    std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                ::log::error!("Failed to create HTTP API runtime: {}", e);
-                return;
-            }
-        };
-        rt.block_on(async {
-            if let Err(e) = api_service_clone.start().await {
-                ::log::error!("HTTP API server failed: {}", e);
-            }
+    {
+        let api_service = api_service.clone();
+        let rt = shared_rt.clone();
+        std::thread::spawn(move || {
+            rt.block_on(async {
+                if let Err(e) = api_service.start().await {
+                    ::log::error!("HTTP API server failed: {}", e);
+                }
+            });
         });
-    });
+    }
     ::log::info!("HTTP API server starting on port 9527");
 
     // ── Initialize Plugin Manager ──
     let plugin_manager = Arc::new(plugins::PluginManager::new());
     {
         let plugin_manager = plugin_manager.clone();
-        std::thread::spawn(move || {
-            match plugin_manager.load_all() {
-                Ok(count) => ::log::info!("Loaded {} plugins", count),
-                Err(e) => ::log::warn!("Failed to load plugins: {}", e),
-            }
+        std::thread::spawn(move || match plugin_manager.load_all() {
+            Ok(count) => ::log::info!("Loaded {} plugins", count),
+            Err(e) => ::log::warn!("Failed to load plugins: {}", e),
         });
     }
 
@@ -96,17 +96,17 @@ fn main() {
         services::cast::CastConfig {
             enabled: false,
             ..Default::default()
-        }
+        },
     ));
 
     // ── Setup QML and start UI ──
-    // All QML files and icons are embedded via the qrc! macro generated from
-    // resources/resources.qrc, so load the main window directly from the
-    // resource tree instead of extracting files to a temporary directory.
     let mut engine = QmlEngine::new();
     engine.set_property("applicationName".into(), QString::from("Aeterna").into());
     engine.set_property("organizationName".into(), QString::from("Aeterna").into());
-    engine.set_property("organizationDomain".into(), QString::from("aeterna.app").into());
+    engine.set_property(
+        "organizationDomain".into(),
+        QString::from("aeterna.app").into(),
+    );
 
     ui::main_window::register_types(&mut engine);
 
@@ -116,7 +116,11 @@ fn main() {
 
     {
         let cast_service = cast_service.clone();
+        let rt = shared_rt.clone();
         std::thread::spawn(move || {
+            // CastService::start 是同步的（内部已 spawn 发现线程），
+            // 但需要 rt 保持存活以支持 cast_to_device 中的异步请求。
+            let _rt = rt;
             match cast_service.start() {
                 Ok(()) => ::log::info!("Cast service started"),
                 Err(e) => ::log::warn!("Cast service not started: {}", e),

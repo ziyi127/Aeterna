@@ -4,7 +4,7 @@
 
 # Aeterna
 
-**下一代跨平台桌面播放器 · Rust + Qt6 原生构建**
+**考试日程播放 / 计时系统 · Rust + Qt6 原生构建**
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85%2B-orange)](https://www.rust-lang.org)
@@ -17,14 +17,14 @@
 
 ## ✨ 特性
 
-- **🎮 专业播放引擎** — 基于 Rust 构建的高性能播放核心，低延迟、高精度
-- **📺 多窗口界面** — 独立的播放器窗口与编辑器窗口，支持拆分视图
-- **🌐 局域网投射** — 内置 mDNS 发现 + WebSocket 投屏协议
-- **🔌 插件系统** — 可扩展的插件架构，支持动态加载
+- **⏱️ 考试日程状态机** — 基于真实时间的考试播放引擎，自动推进开始/结束/提醒回调
+- **📺 多窗口界面** — 独立的播放器窗口与编辑器窗口，适合考场数字标牌场景
+- **🌐 局域网投屏** — 内置 mDNS 设备发现 + HTTP 投屏协议，多屏同步显示
+- **🔌 插件系统** — 可扩展的插件架构，支持菜单/页面/服务注册
 - **🖥️ 跨平台原生** — Qt6 原生界面，一致的体验在 Windows / macOS / Linux
-- **🎨 精致 UI** — Pinguo Design System 设计语言，支持明暗主题自动切换
-- **📡 HTTP API** — 内置 REST API 服务，支持远程控制
-- **⏰ NTP 校时** — 集成 NTP 时间同步服务
+- **🎨 精致 UI** — 支持明暗主题自动切换
+- **📡 HTTP API** — 内置 REST API 服务（健康检查、时间查询、配置管理、WebSocket），支持远程控制
+- **⏰ NTP 校时** — 集成 NTP 时间同步服务，确保考场时钟准确
 - **🪟 Windows UIAccess** — 支持 UIAccess 权限提升以支持全局热键
 
 ## 🖼️ 截图
@@ -64,10 +64,7 @@ cargo build --release
 | 平台 | 架构 | 后缀 |
 |------|------|------|
 | Linux | x86_64 | `.tar.gz` |
-| Linux | i686 | `.tar.gz` |
 | Windows | x86_64 | `.zip` |
-| Windows | x86 | `.zip` |
-| macOS | Intel | `.tar.gz` |
 | macOS | Apple Silicon | `.tar.gz` |
 
 > 注意：运行时需确保系统已安装 Qt6 运行时库。
@@ -77,12 +74,21 @@ cargo build --release
 ```
 Aeterna/
 ├── src/
-│   ├── main.rs              # 入口 + 引擎初始化
-│   ├── window_manager.rs    # 窗口管理 + 单实例锁
+│   ├── main.rs              # 入口 + 服务初始化
+│   ├── window_manager.rs    # 窗口管理 + 单实例锁 + Deep Link
 │   ├── ui_access.rs         # Windows UIAccess 权限
-│   ├── core/                # 核心数据模型与播放引擎
+│   ├── core/                # 核心数据模型与考试播放引擎
+│   │   ├── types.rs         # ExamConfig / ExamInfo / ExamMaterial
+│   │   ├── parser.rs        # JSON 解析与校验
+│   │   ├── player.rs        # 考试状态机（按真实时间推进）
+│   │   └── utils.rs         # 时间解析工具
 │   ├── ui/                  # QML 界面后台逻辑
-│   ├── services/            # HTTP API、NTP、投射服务
+│   │   ├── main_window.rs   # 主窗口 + QML 类型注册
+│   │   ├── player_window.rs # 播放器窗口（NTP + 考试状态桥接）
+│   │   ├── editor_window.rs # 编辑器窗口（JSON 编辑 + 校验）
+│   │   ├── settings_window.rs # 设置窗口
+│   │   └── ...
+│   ├── services/            # HTTP API、NTP、投屏服务
 │   └── plugins/             # 插件系统
 ├── resources/
 │   ├── qml/                 # Qt QML 界面文件

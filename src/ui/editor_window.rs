@@ -1,12 +1,12 @@
 #![allow(ambiguous_glob_reexports)]
 #![allow(non_snake_case)]
 
-use qmetaobject::*;
 use crate::core::parser;
 use crate::core::types::ExamConfig;
 use crate::core::utils::{aeterna_config_dir, strip_file_prefix};
-use std::sync::Mutex;
+use qmetaobject::*;
 use std::path::Path;
+use std::sync::Mutex;
 
 /// Editor backend — file I/O and validation for the exam editor window.
 ///
@@ -67,7 +67,9 @@ impl EditorBackend {
     }
 
     fn exam_count(&self) -> i32 {
-        self._config.lock().unwrap()
+        self._config
+            .lock()
+            .unwrap()
             .as_ref()
             .map(|c| c.exam_infos.len() as i32)
             .unwrap_or(0)
@@ -124,7 +126,10 @@ impl EditorBackend {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(files).unwrap_or_default())
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(files).unwrap_or_default(),
+        )
     }
 
     /// 维护最近文件列表核心逻辑：去重、移到最前、最多保留 10 条。
@@ -175,7 +180,8 @@ impl EditorBackend {
         match serde_json::from_str::<ExamConfig>(&content) {
             Ok(config) => {
                 let valid = parser::validate_exam_config(&config);
-                let pretty = serde_json::to_string_pretty(&config).unwrap_or_else(|_| content.clone());
+                let pretty =
+                    serde_json::to_string_pretty(&config).unwrap_or_else(|_| content.clone());
                 *self._config.lock().unwrap() = Some(config);
                 *self._config_json.lock().unwrap() = pretty;
                 *self._valid.lock().unwrap() = valid;
@@ -297,7 +303,8 @@ impl EditorBackend {
             message: String::new(),
             exam_infos: Vec::new(),
         });
-        *self._config_json.lock().unwrap() = "{\n  \"examName\": \"\",\n  \"message\": \"\",\n  \"examInfos\": []\n}".to_string();
+        *self._config_json.lock().unwrap() =
+            "{\n  \"examName\": \"\",\n  \"message\": \"\",\n  \"examInfos\": []\n}".to_string();
         *self._valid.lock().unwrap() = true;
         *self._unsaved.lock().unwrap() = false;
         *self._file_path.lock().unwrap() = String::new();
@@ -391,7 +398,8 @@ impl EditorBackend {
                 report.errors.is_empty()
             }
             Err(e) => {
-                let report = parser::ValidationReport::single_error("json", format!("JSON 解析失败: {}", e));
+                let report =
+                    parser::ValidationReport::single_error("json", format!("JSON 解析失败: {}", e));
                 self.apply_validation_report(None, json_str, report);
                 false
             }
@@ -404,7 +412,10 @@ impl EditorBackend {
         let content = match std::fs::read_to_string(&path_str) {
             Ok(c) => c,
             Err(e) => {
-                let report = parser::ValidationReport::single_error("file", format!("无法读取文件 {}: {}", path_str, e));
+                let report = parser::ValidationReport::single_error(
+                    "file",
+                    format!("无法读取文件 {}: {}", path_str, e),
+                );
                 self.apply_validation_report(None, String::new(), report);
                 return false;
             }
@@ -428,7 +439,8 @@ impl EditorBackend {
                 true
             }
             Err(e) => {
-                let report = parser::ValidationReport::single_error("json", format!("JSON 解析失败: {}", e));
+                let report =
+                    parser::ValidationReport::single_error("json", format!("JSON 解析失败: {}", e));
                 self.apply_validation_report(None, String::new(), report);
                 false
             }

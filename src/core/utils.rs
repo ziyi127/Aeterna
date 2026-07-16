@@ -207,7 +207,10 @@ mod tests {
         let result = parse_date_time("2025-06-15 08:30:00");
         assert!(result.is_some());
         let dt = result.unwrap();
-        assert_eq!(dt.format("%Y-%m-%d %H:%M:%S").to_string(), "2025-06-15 08:30:00");
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2025-06-15 08:30:00"
+        );
     }
 
     #[test]

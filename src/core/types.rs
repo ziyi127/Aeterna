@@ -18,6 +18,9 @@ pub struct ExamMaterial {
 /// 包含考试名称、起止时间、提醒时间及材料清单。
 /// 由 JSON 反序列化生成，`start` 和 `end` 字段支持
 /// `YYYY-MM-DD HH:MM:SS` 格式。
+///
+/// `start_ts` / `end_ts` 为解析缓存字段，由 [`ExamInfo::cache_timestamps`]
+/// 按需填充，跳过 serde 序列化以保持 JSON 输出整洁。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExamInfo {
     /// 考试名称，如"语文"、"数学"
@@ -31,6 +34,47 @@ pub struct ExamInfo {
     pub alert_time: i32,
     /// 考试材料清单，`None` 表示无材料
     pub materials: Option<Vec<ExamMaterial>>,
+    /// 缓存的开始时间毫秒时间戳（跳过序列化）
+    #[serde(skip, default = "default_i64")]
+    pub start_ts: i64,
+    /// 缓存的结束时间毫秒时间戳（跳过序列化）
+    #[serde(skip, default = "default_i64")]
+    pub end_ts: i64,
+}
+
+fn default_i64() -> i64 {
+    0
+}
+
+impl ExamInfo {
+    /// 解析 `start` / `end` 字符串并缓存为毫秒时间戳。
+    ///
+    /// 应在反序列化后调用一次，后续所有时间比较直接读 `start_ts` / `end_ts`。
+    pub fn cache_timestamps(&mut self) {
+        self.start_ts = crate::core::utils::parse_date_time_ms(&self.start);
+        self.end_ts = crate::core::utils::parse_date_time_ms(&self.end);
+    }
+
+    /// 创建新的 `ExamInfo`，同时缓存时间戳。
+    pub fn new(
+        name: String,
+        start: String,
+        end: String,
+        alert_time: i32,
+        materials: Option<Vec<ExamMaterial>>,
+    ) -> Self {
+        let mut info = ExamInfo {
+            name,
+            start,
+            end,
+            alert_time,
+            materials,
+            start_ts: 0,
+            end_ts: 0,
+        };
+        info.cache_timestamps();
+        info
+    }
 }
 
 /// 完整考试配置
@@ -47,6 +91,15 @@ pub struct ExamConfig {
     /// 考试信息列表，按时间排序后使用
     #[serde(rename = "examInfos")]
     pub exam_infos: Vec<ExamInfo>,
+}
+
+impl ExamConfig {
+    /// 对所有 `exam_infos` 调用 [`ExamInfo::cache_timestamps`]。
+    pub fn cache_timestamps(&mut self) {
+        for info in &mut self.exam_infos {
+            info.cache_timestamps();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +159,8 @@ mod tests {
                 end: "2025-01-01 10:00:00".to_string(),
                 alert_time: 5,
                 materials: None,
+                start_ts: 0,
+                end_ts: 0,
             }],
         };
 

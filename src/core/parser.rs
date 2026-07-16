@@ -1,14 +1,14 @@
 use crate::core::types::ExamConfig;
 use crate::core::types::ExamInfo;
-use crate::core::utils::{parse_date_time, parse_date_time_ms};
+use crate::core::utils::parse_date_time;
 use serde::Serialize;
 use std::cmp::Ordering;
 
 /// 按考试开始时间升序的比较器。
 ///
-/// 不可解析的时间会回退到 0，因此会排在最前面。
+/// 使用缓存的 `start_ts` 字段；未缓存的项（值为 0）会排在最前面。
 fn cmp_exam_by_start(a: &ExamInfo, b: &ExamInfo) -> Ordering {
-    parse_date_time_ms(&a.start).cmp(&parse_date_time_ms(&b.start))
+    a.start_ts.cmp(&b.start_ts)
 }
 
 /// 解析考试配置的 JSON 字符串，并返回 `ExamConfig` 对象。
@@ -27,38 +27,10 @@ pub fn parse_exam_config(json: &str) -> Option<ExamConfig> {
 
 /// 验证考试配置是否有效。
 ///
-/// 对应 TS 的 `validateExamConfig` 函数。
-/// 验证规则与原始 TypeScript 完全一致：
-/// - examInfos 必须是数组，且可为空（空数组视为有效）
-/// - 每个 examInfo 的 name/start/end 必须是非空字符串
-/// - alertTime 必须是有限数字
+/// 委托给 [`validate_exam_config_with_details`]，仅返回布尔结果。
+/// 保留此便捷函数以避免强制所有调用点处理报告。
 pub fn validate_exam_config(config: &ExamConfig) -> bool {
-    let exam_infos = &config.exam_infos;
-
-    if exam_infos.is_empty() {
-        return true;
-    }
-
-    exam_infos.iter().all(|info| {
-        // name 必须是非空字符串
-        if info.name.trim().is_empty() {
-            return false;
-        }
-        // start 必须是非空字符串
-        if info.start.trim().is_empty() {
-            return false;
-        }
-        // end 必须是非空字符串
-        if info.end.trim().is_empty() {
-            return false;
-        }
-        // alertTime 必须是有限数字（i32 总是有限的，这里检查非负）
-        // 与 TS 中 Number.isFinite 对应：在 Rust 中 i32 总是有限值
-        if info.alert_time < 0 {
-            return false;
-        }
-        true
-    })
+    validate_exam_config_with_details(config).errors.is_empty()
 }
 
 /// 检查考试时间是否有重叠。
@@ -70,9 +42,7 @@ pub fn has_exam_time_overlap(config: &ExamConfig) -> bool {
     sorted.sort_by(|a, b| cmp_exam_by_start(a, b));
 
     for i in 0..sorted.len().saturating_sub(1) {
-        let end_i = parse_date_time_ms(&sorted[i].end);
-        let start_next = parse_date_time_ms(&sorted[i + 1].start);
-        if end_i > start_next {
+        if sorted[i].end_ts > sorted[i + 1].start_ts {
             return true;
         }
     }
@@ -159,8 +129,9 @@ impl ValidationReport {
         }
     }
 
+    /// 返回校验报告是否无错误（warnings 不影响此判断）。
     #[allow(dead_code)]
-    fn is_valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         self.errors.is_empty()
     }
 }
@@ -180,11 +151,9 @@ pub fn validate_exam_config_with_details(config: &ExamConfig) -> ValidationRepor
 
     // 全局 exam_name 校验
     if config.exam_name.trim().is_empty() {
-        report.errors.push(ValidationIssue::error(
-            None,
-            "examName",
-            "考试名称不能为空",
-        ));
+        report
+            .errors
+            .push(ValidationIssue::error(None, "examName", "考试名称不能为空"));
     }
 
     // 先收集每个考试可解析的时间区间，用于后续重叠判断
@@ -281,16 +250,12 @@ pub fn validate_exam_config_with_details(config: &ExamConfig) -> ValidationRepor
                         "考试 '{}' 与 '{}' 的时间存在重叠",
                         config.exam_infos[j].name, config.exam_infos[i].name
                     );
-                    report.warnings.push(ValidationIssue::warning(
-                        Some(i),
-                        "timeOverlap",
-                        &msg_i,
-                    ));
-                    report.warnings.push(ValidationIssue::warning(
-                        Some(j),
-                        "timeOverlap",
-                        &msg_j,
-                    ));
+                    report
+                        .warnings
+                        .push(ValidationIssue::warning(Some(i), "timeOverlap", &msg_i));
+                    report
+                        .warnings
+                        .push(ValidationIssue::warning(Some(j), "timeOverlap", &msg_j));
                 }
             }
         }
@@ -311,7 +276,7 @@ mod tests {
     use crate::core::types::ExamInfo;
 
     fn make_test_config() -> ExamConfig {
-        ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "期末考试".to_string(),
             message: "请认真答题".to_string(),
             exam_infos: vec![
@@ -321,6 +286,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "数学".to_string(),
@@ -328,13 +295,17 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 10,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
-        }
+        };
+        config.cache_timestamps();
+        config
     }
 
     fn make_overlapping_config() -> ExamConfig {
-        ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "重叠考试".to_string(),
             message: "时间有重叠".to_string(),
             exam_infos: vec![
@@ -344,6 +315,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "数学".to_string(),
@@ -351,9 +324,13 @@ mod tests {
                     end: "2025-06-15 11:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
-        }
+        };
+        config.cache_timestamps();
+        config
     }
 
     #[test]
@@ -398,11 +375,12 @@ mod tests {
 
     #[test]
     fn test_validate_exam_config_empty_exam_infos() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "空考试".to_string(),
             message: "无考试".to_string(),
             exam_infos: vec![],
         };
+        config.cache_timestamps();
         assert!(validate_exam_config(&config));
     }
 
@@ -441,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_has_exam_time_overlap_adjacent() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "相邻考试".to_string(),
             message: "".to_string(),
             exam_infos: vec![
@@ -451,6 +429,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "数学".to_string(),
@@ -458,16 +438,19 @@ mod tests {
                     end: "2025-06-15 12:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
         // 前一场结束 = 后一场开始，不应视为重叠
         assert!(!has_exam_time_overlap(&config));
     }
 
     #[test]
     fn test_get_sorted_exam_infos() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "".to_string(),
             exam_infos: vec![
@@ -477,6 +460,8 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 10,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "语文".to_string(),
@@ -484,9 +469,12 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
         let sorted = get_sorted_exam_infos(&config);
         assert_eq!(sorted[0].name, "语文");
         assert_eq!(sorted[1].name, "数学");
@@ -494,7 +482,7 @@ mod tests {
 
     #[test]
     fn test_get_sorted_exam_config() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "消息".to_string(),
             exam_infos: vec![
@@ -504,6 +492,8 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 10,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "语文".to_string(),
@@ -511,9 +501,12 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
         let sorted = get_sorted_exam_config(config);
         assert_eq!(sorted.exam_name, "测试");
         assert_eq!(sorted.message, "消息");
@@ -591,9 +584,7 @@ mod tests {
         assert!(report
             .errors
             .iter()
-            .any(|e| e.exam_index == Some(0)
-                && e.field == "end"
-                && e.message.contains("晚于")));
+            .any(|e| e.exam_index == Some(0) && e.field == "end" && e.message.contains("晚于")));
     }
 
     #[test]
@@ -622,31 +613,26 @@ mod tests {
             .warnings
             .iter()
             .all(|w| w.issue_type == "warning" && w.field == "timeOverlap"));
-        assert!(report
-            .warnings
-            .iter()
-            .any(|w| w.exam_index == Some(0)));
-        assert!(report
-            .warnings
-            .iter()
-            .any(|w| w.exam_index == Some(1)));
+        assert!(report.warnings.iter().any(|w| w.exam_index == Some(0)));
+        assert!(report.warnings.iter().any(|w| w.exam_index == Some(1)));
     }
 
     #[test]
     fn test_validate_exam_config_with_details_multiple_errors() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "".to_string(),
             message: "msg".to_string(),
-            exam_infos: vec![
-                ExamInfo {
-                    name: "".to_string(),
-                    start: "bad".to_string(),
-                    end: "worse".to_string(),
-                    alert_time: 1234,
-                    materials: None,
-                },
-            ],
+            exam_infos: vec![ExamInfo {
+                name: "".to_string(),
+                start: "bad".to_string(),
+                end: "worse".to_string(),
+                alert_time: 1234,
+                materials: None,
+                start_ts: 0,
+                end_ts: 0,
+            }],
         };
+        config.cache_timestamps();
         let report = validate_exam_config_with_details(&config);
         assert_eq!(report.errors.len(), 5);
         assert!(report
@@ -686,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_sort_exam_config_by_start() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "消息".to_string(),
             exam_infos: vec![
@@ -696,6 +682,8 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 10,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "语文".to_string(),
@@ -703,6 +691,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "英语".to_string(),
@@ -710,9 +700,12 @@ mod tests {
                     end: "2025-06-15 12:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
         let sorted = sort_exam_config_by_start(config);
         assert_eq!(sorted.exam_name, "测试");
         assert_eq!(sorted.message, "消息");
@@ -723,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_sort_exam_config_by_start_invalid_time_fallback() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "测试".to_string(),
             message: "消息".to_string(),
             exam_infos: vec![
@@ -733,6 +726,8 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 10,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "语文".to_string(),
@@ -740,9 +735,12 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
         let sorted = sort_exam_config_by_start(config);
         // 不可解析的时间会回退到 0，因此排在最前面
         assert_eq!(sorted.exam_infos[0].name, "语文");

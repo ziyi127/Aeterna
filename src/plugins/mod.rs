@@ -1,13 +1,16 @@
 //! 插件系统
 //!
 //! 支持动态加载和管理插件，提供插件清单解析、服务注册和插件商店功能。
+//!
+//! 插件系统处于早期阶段，大量 API 目前仅由测试驱动，因此保留模块级
+//! `#[allow(dead_code)]` 直到上游调用者就位。
 #![allow(dead_code)]
 
+use crate::core::utils::aeterna_config_dir;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
-use log::{info, warn};
-use crate::core::utils::aeterna_config_dir;
+use std::sync::{LazyLock, Mutex};
 
 /// 已注册的菜单项
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,7 +80,10 @@ impl PluginRegistry {
         let mut menus = self.menus.lock().map_err(|e| e.to_string())?;
 
         // 检查是否已存在相同路径的菜单项
-        if menus.iter().any(|m| m.menu_path == menu_path && m.label == label) {
+        if menus
+            .iter()
+            .any(|m| m.menu_path == menu_path && m.label == label)
+        {
             return Err(format!("菜单项 '{}' 已存在", menu_path));
         }
 
@@ -88,7 +94,10 @@ impl PluginRegistry {
             callback_id: callback_id.to_string(),
         });
 
-        info!("Plugin '{}' registered menu item: {} -> {}", plugin_name, menu_path, label);
+        info!(
+            "Plugin '{}' registered menu item: {} -> {}",
+            plugin_name, menu_path, label
+        );
         Ok(())
     }
 
@@ -113,7 +122,10 @@ impl PluginRegistry {
             icon: icon.to_string(),
         });
 
-        info!("Plugin '{}' registered page: {} ({})", plugin_name, page_id, title);
+        info!(
+            "Plugin '{}' registered page: {} ({})",
+            plugin_name, page_id, title
+        );
         Ok(())
     }
 
@@ -136,7 +148,10 @@ impl PluginRegistry {
             service_id: service_id.to_string(),
         });
 
-        info!("Plugin '{}' registered service: {} ({})", plugin_name, service_name, service_id);
+        info!(
+            "Plugin '{}' registered service: {} ({})",
+            plugin_name, service_name, service_id
+        );
         Ok(())
     }
 
@@ -182,10 +197,8 @@ impl PluginRegistry {
     }
 }
 
-lazy_static::lazy_static! {
-    /// 全局插件注册表
-    pub static ref PLUGIN_REGISTRY: PluginRegistry = PluginRegistry::new();
-}
+/// 全局插件注册表
+pub static PLUGIN_REGISTRY: LazyLock<PluginRegistry> = LazyLock::new(PluginRegistry::new);
 
 /// 便捷的全局注册方法
 pub mod injection {
@@ -369,8 +382,7 @@ impl PluginManager {
         let path = std::path::Path::new(&plugin_dir);
 
         if !path.exists() {
-            std::fs::create_dir_all(path)
-                .map_err(|e| format!("创建插件目录失败: {}", e))?;
+            std::fs::create_dir_all(path).map_err(|e| format!("创建插件目录失败: {}", e))?;
             info!("Created plugin directory: {}", plugin_dir);
             return Ok(0);
         }
@@ -405,9 +417,7 @@ impl PluginManager {
             manifest: manifest.clone(),
             state: PluginState::Installed,
             path: path.to_string_lossy().to_string(),
-            installed_at: chrono::Local::now()
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
+            installed_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
         };
 
         if let Ok(mut plugins) = self.plugins.lock() {
@@ -427,8 +437,7 @@ impl PluginManager {
             return Err(format!("插件 {} 已安装", name));
         }
 
-        std::fs::create_dir_all(&install_path)
-            .map_err(|e| format!("创建插件目录失败: {}", e))?;
+        std::fs::create_dir_all(&install_path).map_err(|e| format!("创建插件目录失败: {}", e))?;
 
         info!("Plugin {} installed at {:?}", name, install_path);
         Ok(())
@@ -492,8 +501,7 @@ impl PluginManager {
 
     /// 解析插件清单
     pub fn parse_manifest(json: &str) -> Result<PluginManifest, String> {
-        serde_json::from_str(json)
-            .map_err(|e| format!("解析插件清单失败: {}", e))
+        serde_json::from_str(json).map_err(|e| format!("解析插件清单失败: {}", e))
     }
 
     /// 获取插件商店列表（模拟数据）
@@ -631,12 +639,7 @@ mod tests {
 
     #[test]
     fn test_register_page() {
-        let result = injection::register_page(
-            "test-plugin",
-            "stats_page",
-            "数据统计",
-            "📊",
-        );
+        let result = injection::register_page("test-plugin", "stats_page", "数据统计", "📊");
         assert!(result.is_ok());
     }
 
@@ -649,11 +652,7 @@ mod tests {
 
     #[test]
     fn test_register_service() {
-        let result = injection::register_service(
-            "test-plugin",
-            "数据导出服务",
-            "export_service",
-        );
+        let result = injection::register_service("test-plugin", "数据导出服务", "export_service");
         assert!(result.is_ok());
     }
 
@@ -700,8 +699,14 @@ mod tests {
 
         PLUGIN_REGISTRY.unregister_plugin("unregister-test");
 
-        assert!(injection::get_registered_menus().iter().all(|m| m.plugin_name != "unregister-test"));
-        assert!(injection::get_registered_pages().iter().all(|p| p.plugin_name != "unregister-test"));
-        assert!(injection::get_registered_services().iter().all(|s| s.plugin_name != "unregister-test"));
+        assert!(injection::get_registered_menus()
+            .iter()
+            .all(|m| m.plugin_name != "unregister-test"));
+        assert!(injection::get_registered_pages()
+            .iter()
+            .all(|p| p.plugin_name != "unregister-test"));
+        assert!(injection::get_registered_services()
+            .iter()
+            .all(|s| s.plugin_name != "unregister-test"));
     }
 }

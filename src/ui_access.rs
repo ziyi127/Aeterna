@@ -140,11 +140,8 @@ mod windows_impl {
         fn Process32FirstW(hSnapshot: HANDLE, lppe: *mut PROCESSENTRY32W) -> BOOL;
         fn Process32NextW(hSnapshot: HANDLE, lppe: *mut PROCESSENTRY32W) -> BOOL;
         fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
-        fn LookupPrivilegeValueW(
-            lpSystemName: LPCWSTR,
-            lpName: LPCWSTR,
-            lpLuid: *mut LUID,
-        ) -> BOOL;
+        fn LookupPrivilegeValueW(lpSystemName: LPCWSTR, lpName: LPCWSTR, lpLuid: *mut LUID)
+            -> BOOL;
         fn PrivilegeCheck(
             ClientToken: HANDLE,
             RequiredPrivileges: *mut PRIVILEGE_SET,
@@ -224,12 +221,7 @@ mod windows_impl {
         let se_tcb_name = to_wide("SeTcbPrivilege");
         let mut luid: LUID = 0;
 
-        if LookupPrivilegeValueW(
-            std::ptr::null(),
-            se_tcb_name.as_ptr(),
-            &mut luid,
-        ) == 0
-        {
+        if LookupPrivilegeValueW(std::ptr::null(), se_tcb_name.as_ptr(), &mut luid) == 0 {
             return GetLastError();
         }
 
@@ -360,11 +352,8 @@ mod windows_impl {
         }
 
         let mut h_token_system: HANDLE = std::ptr::null_mut();
-        let mut dw_err = duplicate_winlogon_token(
-            dw_session_id,
-            TOKEN_IMPERSONATE,
-            &mut h_token_system,
-        );
+        let mut dw_err =
+            duplicate_winlogon_token(dw_session_id, TOKEN_IMPERSONATE, &mut h_token_system);
 
         if dw_err == ERROR_SUCCESS {
             if SetThreadToken(std::ptr::null_mut(), h_token_system) != 0 {

@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use crate::core::parser::{get_sorted_exam_infos, validate_exam_config};
 use crate::core::types::{ExamConfig, ExamInfo};
-use crate::core::utils::parse_date_time_ms;
 use crate::core::utils::parse_date_time;
 
 /// 考试状态
@@ -112,10 +111,7 @@ impl PlayerCore {
     /// 创建新的 PlayerCore 实例。
     ///
     /// 对应 TS 的构造函数。
-    pub fn new(
-        config: Option<ExamConfig>,
-        time_fn: Box<dyn Fn() -> i64 + Send + 'static>,
-    ) -> Self {
+    pub fn new(config: Option<ExamConfig>, time_fn: Box<dyn Fn() -> i64 + Send + 'static>) -> Self {
         let current_time = time_fn();
         let inner = PlayerInner {
             state: PlayerState::default(),
@@ -389,8 +385,8 @@ impl PlayerCore {
             }
         };
 
-        let start_ms = parse_date_time_ms(&exam.start);
-        let end_ms = parse_date_time_ms(&exam.end);
+        let start_ms = exam.start_ts;
+        let end_ms = exam.end_ts;
         let now = inner.current_time_ms;
 
         if now < start_ms {
@@ -437,8 +433,8 @@ impl PlayerCore {
             None => return "00:00".to_string(),
         };
 
-        let start_ms = parse_date_time_ms(&exam.start);
-        let end_ms = parse_date_time_ms(&exam.end);
+        let start_ms = exam.start_ts;
+        let end_ms = exam.end_ts;
         let now = inner.current_time_ms;
 
         if now < start_ms {
@@ -455,13 +451,10 @@ impl PlayerCore {
     /// 获取当前考试剩余毫秒数（仅进行中考试有效）。
     pub fn remaining_time_ms(&self) -> Option<i64> {
         let inner = self.inner.lock().unwrap();
-        let exam = match Self::get_current_exam_inner(&inner) {
-            Some(e) => e,
-            None => return None,
-        };
+        let exam = Self::get_current_exam_inner(&inner)?;
 
-        let start_ms = parse_date_time_ms(&exam.start);
-        let end_ms = parse_date_time_ms(&exam.end);
+        let start_ms = exam.start_ts;
+        let end_ms = exam.end_ts;
         let now = inner.current_time_ms;
 
         if now >= start_ms && now < end_ms {
@@ -498,11 +491,7 @@ impl PlayerCore {
             None => return "暂无安排".to_string(),
         };
 
-        format!(
-            "{} - {}",
-            start.format("%H:%M"),
-            end.format("%H:%M")
-        )
+        format!("{} - {}", start.format("%H:%M"), end.format("%H:%M"))
     }
 
     /// 获取排序后的考试信息列表。
@@ -563,10 +552,7 @@ impl PlayerCore {
 
         // 第一步：寻找正在进行的考试
         for (i, exam) in sorted.iter().enumerate() {
-            let start_ms = parse_date_time_ms(&exam.start);
-            let end_ms = parse_date_time_ms(&exam.end);
-
-            if now >= start_ms && now < end_ms {
+            if now >= exam.start_ts && now < exam.end_ts {
                 target_index = i;
                 found_in_progress = true;
                 break;
@@ -576,19 +562,14 @@ impl PlayerCore {
         if !found_in_progress {
             // 第二步：找最近的未开始考试
             for (i, exam) in sorted.iter().enumerate() {
-                let start_ms = parse_date_time_ms(&exam.start);
-
-                if now < start_ms {
+                if now < exam.start_ts {
                     target_index = i;
                     break;
                 }
             }
 
             // 如果所有考试都已结束，显示最后一场
-            let all_completed = sorted.iter().all(|exam| {
-                let end_ms = parse_date_time_ms(&exam.end);
-                now >= end_ms
-            });
+            let all_completed = sorted.iter().all(|exam| now >= exam.end_ts);
 
             if all_completed && !sorted.is_empty() {
                 target_index = sorted.len() - 1;
@@ -599,8 +580,7 @@ impl PlayerCore {
         let old_index = inner.state.current_exam_index;
         if old_index < sorted.len() {
             let old_exam = &sorted[old_index];
-            let end_ms = parse_date_time_ms(&old_exam.end);
-            if now >= end_ms && old_index < sorted.len() - 1 {
+            if now >= old_exam.end_ts && old_index < sorted.len() - 1 {
                 target_index = target_index.max(old_index + 1);
             }
         }
@@ -620,8 +600,8 @@ impl PlayerCore {
         let now = inner.current_time_ms;
 
         for exam in &config.exam_infos {
-            let start_ms = parse_date_time_ms(&exam.start);
-            let end_ms = parse_date_time_ms(&exam.end);
+            let start_ms = exam.start_ts;
+            let end_ms = exam.end_ts;
 
             // 考试开始任务
             inner.tasks.push(Task {
@@ -689,7 +669,7 @@ mod tests {
     use crate::core::utils::parse_date_time;
 
     fn make_test_config() -> ExamConfig {
-        ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "期末考试".to_string(),
             message: "请认真答题".to_string(),
             exam_infos: vec![
@@ -699,6 +679,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "数学".to_string(),
@@ -706,9 +688,13 @@ mod tests {
                     end: "2025-06-15 16:00:00".to_string(),
                     alert_time: 10,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
-        }
+        };
+        config.cache_timestamps();
+        config
     }
 
     fn make_time_fn(timestamp_ms: i64) -> Box<dyn Fn() -> i64 + Send + 'static> {
@@ -746,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_update_config_with_overlap() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "重叠考试".to_string(),
             message: "".to_string(),
             exam_infos: vec![
@@ -756,6 +742,8 @@ mod tests {
                     end: "2025-06-15 10:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
                 ExamInfo {
                     name: "数学".to_string(),
@@ -763,9 +751,12 @@ mod tests {
                     end: "2025-06-15 11:00:00".to_string(),
                     alert_time: 5,
                     materials: None,
+                    start_ts: 0,
+                    end_ts: 0,
                 },
             ],
         };
+        config.cache_timestamps();
 
         let ts = parse_date_time("2025-06-15 07:00:00")
             .unwrap()
@@ -1109,7 +1100,7 @@ mod tests {
 
     #[test]
     fn test_alert_task_timing() {
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "提醒测试".to_string(),
             message: "".to_string(),
             exam_infos: vec![ExamInfo {
@@ -1118,8 +1109,11 @@ mod tests {
                 end: "2025-06-15 10:00:00".to_string(),
                 alert_time: 15,
                 materials: None,
+                start_ts: 0,
+                end_ts: 0,
             }],
         };
+        config.cache_timestamps();
 
         let before_alert = parse_date_time("2025-06-15 09:40:00")
             .unwrap()
@@ -1164,7 +1158,7 @@ mod tests {
     fn test_task_removed_after_execution_prevents_duplicates() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let config = ExamConfig {
+        let mut config = ExamConfig {
             exam_name: "单场考试".to_string(),
             message: "".to_string(),
             exam_infos: vec![ExamInfo {
@@ -1173,8 +1167,11 @@ mod tests {
                 end: "2025-06-15 10:00:00".to_string(),
                 alert_time: 0,
                 materials: None,
+                start_ts: 0,
+                end_ts: 0,
             }],
         };
+        config.cache_timestamps();
 
         let before = parse_date_time("2025-06-15 07:00:00")
             .unwrap()

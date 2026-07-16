@@ -10,13 +10,13 @@
 //! - 速率限制
 //! - WebSocket 支持
 
-use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse, middleware};
 use actix_cors::Cors;
-use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use log::info;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// 速率限制器
 ///
@@ -85,7 +85,6 @@ impl RateLimiter {
     }
 
     /// 重置指定 IP 的计数器
-    #[allow(dead_code)]
     pub fn reset(&self, ip: &str) {
         if let Ok(mut requests) = self.requests.lock() {
             requests.remove(ip);
@@ -93,7 +92,6 @@ impl RateLimiter {
     }
 
     /// 重置所有计数器
-    #[allow(dead_code)]
     pub fn reset_all(&self) {
         if let Ok(mut requests) = self.requests.lock() {
             requests.clear();
@@ -179,7 +177,6 @@ pub struct ExamInfoRequest {
 pub struct HttpApiService {
     config: Mutex<ApiConfig>,
     start_time: std::time::Instant,
-    #[allow(dead_code)]
     rate_limiter: RateLimiter,
 }
 
@@ -192,7 +189,6 @@ impl HttpApiService {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_config(config: ApiConfig) -> Self {
         HttpApiService {
             config: Mutex::new(config),
@@ -202,7 +198,6 @@ impl HttpApiService {
     }
 
     /// 创建自定义速率限制的 API 服务
-    #[allow(dead_code)]
     pub fn with_rate_limit(max_requests: usize, window_seconds: u64) -> Self {
         HttpApiService {
             config: Mutex::new(ApiConfig::default()),
@@ -212,7 +207,6 @@ impl HttpApiService {
     }
 
     /// 更新配置
-    #[allow(dead_code)]
     pub fn update_config(&self, config: ApiConfig) {
         if let Ok(mut c) = self.config.lock() {
             *c = config;
@@ -282,13 +276,11 @@ impl HttpApiService {
     }
 
     /// 获取运行时间（秒）
-    #[allow(dead_code)]
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
     }
 
     /// 获取当前状态
-    #[allow(dead_code)]
     pub fn status(&self) -> ApiStatus {
         let config = self.config.lock().unwrap();
         ApiStatus {
@@ -368,7 +360,7 @@ fn check_rate_limit(req: &HttpRequest, limiter: &web::Data<RateLimiter>) -> Opti
                     "error": "Too Many Requests",
                     "message": "请求过于频繁，请稍后再试",
                     "retry_after_seconds": 60
-                }))
+                })),
         )
     } else {
         None
@@ -383,9 +375,7 @@ async fn health_check(req: HttpRequest, limiter: web::Data<RateLimiter>) -> Http
     let response = HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        timestamp: chrono::Local::now()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
+        timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
     };
     HttpResponse::Ok().json(response)
 }
@@ -416,7 +406,11 @@ async fn get_ntp_status(req: HttpRequest, limiter: web::Data<RateLimiter>) -> Ht
 }
 
 /// 获取配置
-async fn get_config(req: HttpRequest, state: web::Data<ApiState>, limiter: web::Data<RateLimiter>) -> HttpResponse {
+async fn get_config(
+    req: HttpRequest,
+    state: web::Data<ApiState>,
+    limiter: web::Data<RateLimiter>,
+) -> HttpResponse {
     if let Some(response) = check_rate_limit(&req, &limiter) {
         return response;
     }
@@ -456,7 +450,11 @@ async fn update_config(
 }
 
 /// 获取服务状态
-async fn get_status(req: HttpRequest, state: web::Data<ApiState>, limiter: web::Data<RateLimiter>) -> HttpResponse {
+async fn get_status(
+    req: HttpRequest,
+    state: web::Data<ApiState>,
+    limiter: web::Data<RateLimiter>,
+) -> HttpResponse {
     if let Some(response) = check_rate_limit(&req, &limiter) {
         return response;
     }

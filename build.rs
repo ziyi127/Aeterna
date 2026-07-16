@@ -8,7 +8,9 @@ fn main() {
     // binary self-contained and avoids drift between resources.qrc and the
     // actual files registered at runtime.
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
-    let qrc_path = PathBuf::from(&manifest_dir).join("resources").join("resources.qrc");
+    let qrc_path = PathBuf::from(&manifest_dir)
+        .join("resources")
+        .join("resources.qrc");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
     let out_path = PathBuf::from(&out_dir).join("resources_qrc.rs");
 

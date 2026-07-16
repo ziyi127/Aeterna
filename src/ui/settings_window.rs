@@ -1,15 +1,15 @@
 #![allow(ambiguous_glob_reexports)]
 
+use crate::core::utils::aeterna_config_dir;
 use qmetaobject::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use crate::core::utils::aeterna_config_dir;
 
 /// Settings structures and backend for user preferences.
 ///
 /// SettingsBackend's qmetaobject macro-generated fields are accessed
 /// by Qt/QML reflection only, hence the `#[allow(dead_code)]` on the impl.
-
+///
 /// 设置值
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -34,7 +34,7 @@ pub struct BasicSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppearanceSettings {
     pub theme: String,
-    pub theme_mode: String,          // "auto" / "dark" / "light"
+    pub theme_mode: String,           // "auto" / "dark" / "light"
     pub custom_primary_color: String, // 空字符串 = 使用 Pinguo Blue
     pub body_font: String,
     pub number_font: String,
@@ -124,8 +124,8 @@ impl Default for Settings {
                 clock_style: "digital".to_string(),
                 show_seconds: true,
                 show_date: true,
-                primary_color: String::new(),   // empty = use Pinguo Blue #007aff
-                bg_color: String::new(),        // empty = use theme background
+                primary_color: String::new(), // empty = use Pinguo Blue #007aff
+                bg_color: String::new(),      // empty = use theme background
                 ui_scale: 1.0,
                 density: "comfortable".to_string(),
                 big_clock: false,
@@ -181,7 +181,7 @@ fn default_config_dir() -> String {
 #[derive(QObject, Default)]
 pub struct SettingsBackend {
     base: qt_base_class!(trait QObject),
-    
+
     settings_json: qt_property!(QString; READ settings_json NOTIFY settings_json_changed),
     config_path: qt_property!(QString; READ config_path NOTIFY config_path_changed),
     theme_mode: qt_property!(QString; READ theme_mode WRITE set_theme_mode NOTIFY theme_mode_changed),
@@ -207,7 +207,7 @@ pub struct SettingsBackend {
     sync_ntp_all: qt_method!(fn(&self) -> bool),
     add_ntp_server: qt_method!(fn(&self)),
     remove_ntp_server: qt_method!(fn(&self, index: i32)),
-    
+
     settings_json_changed: qt_signal!(),
     config_path_changed: qt_signal!(),
     theme_mode_changed: qt_signal!(),
@@ -479,13 +479,25 @@ impl SettingsBackend {
         // 找到 server 在列表中的索引
         let idx = {
             let s = self._settings.lock().unwrap();
-            s.time.ntp_servers.iter().position(|srv| srv == &server_str).map(|i| i as i32).unwrap_or(-1)
+            s.time
+                .ntp_servers
+                .iter()
+                .position(|srv| srv == &server_str)
+                .map(|i| i as i32)
+                .unwrap_or(-1)
         };
         std::thread::spawn(move || {
             let service = crate::services::ntp::NtpService::new();
             let result = service.sync();
             if result.status == crate::services::ntp::NtpSyncStatus::Synced {
-                sender((idx, true, format!("延迟 {}ms, 偏移 {}ms", result.round_trip_delay_ms, result.offset_ms)));
+                sender((
+                    idx,
+                    true,
+                    format!(
+                        "延迟 {}ms, 偏移 {}ms",
+                        result.round_trip_delay_ms, result.offset_ms
+                    ),
+                ));
             } else {
                 let err = match &result.status {
                     crate::services::ntp::NtpSyncStatus::Failed(e) => e.clone(),
@@ -499,9 +511,7 @@ impl SettingsBackend {
 
     /// 同步所有 NTP 服务器，取第一个成功的结果。
     fn sync_ntp_all(&self) -> bool {
-        let servers = {
-            self._settings.lock().unwrap().time.ntp_servers.clone()
-        };
+        let servers = { self._settings.lock().unwrap().time.ntp_servers.clone() };
         if servers.is_empty() {
             return false;
         }
@@ -512,12 +522,17 @@ impl SettingsBackend {
             }
         });
         std::thread::spawn(move || {
-            let mut config = crate::services::ntp::NtpConfig::default();
-            config.servers = servers;
+            let config = crate::services::ntp::NtpConfig {
+                servers,
+                ..crate::services::ntp::NtpConfig::default()
+            };
             let service = crate::services::ntp::NtpService::with_config(config);
             let result = service.sync();
             if result.status == crate::services::ntp::NtpSyncStatus::Synced {
-                sender((true, format!("同步成功: {} (偏移 {}ms)", result.server, result.offset_ms)));
+                sender((
+                    true,
+                    format!("同步成功: {} (偏移 {}ms)", result.server, result.offset_ms),
+                ));
             } else {
                 let err = match &result.status {
                     crate::services::ntp::NtpSyncStatus::Failed(e) => e.clone(),
@@ -554,24 +569,26 @@ impl SettingsBackend {
         let p = std::path::Path::new(path);
         if let Some(parent) = p.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                ::log::error!("Failed to create settings directory {}: {}", parent.display(), e);
+                ::log::error!(
+                    "Failed to create settings directory {}: {}",
+                    parent.display(),
+                    e
+                );
                 return false;
             }
         }
 
         match serde_json::to_string_pretty(settings) {
-            Ok(json) => {
-                match std::fs::write(path, json) {
-                    Ok(_) => {
-                        ::log::info!("Settings saved to {}", path);
-                        true
-                    }
-                    Err(e) => {
-                        ::log::error!("Failed to write settings file: {}", e);
-                        false
-                    }
+            Ok(json) => match std::fs::write(path, json) {
+                Ok(_) => {
+                    ::log::info!("Settings saved to {}", path);
+                    true
                 }
-            }
+                Err(e) => {
+                    ::log::error!("Failed to write settings file: {}", e);
+                    false
+                }
+            },
             Err(e) => {
                 ::log::error!("Failed to serialize settings: {}", e);
                 false

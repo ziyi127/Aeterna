@@ -61,7 +61,8 @@ impl DiscoverManager {
             *json_guard = r#"[
                 {"name":"Aeterna 播放器 (192.168.1.100)","type":"player","status":"在线"},
                 {"name":"Aeterna 编辑器 (192.168.1.101)","type":"editor","status":"在线"}
-            ]"#.to_string();
+            ]"#
+            .to_string();
         }
         self.devices_json_changed();
         self.device_count_changed();

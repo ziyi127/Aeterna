@@ -2,7 +2,7 @@
 name = "aeterna"
 version = "2.0.0-beta.1"
 edition = "2021"
-description = "Aeterna - Native Desktop Application"
+description = "Aeterna - Exam Schedule Player / Timer System"
 authors = ["ziyi127"]
 license = "GPL-3.0-only"
 repository = "https://github.com/ziyi127/Aeterna"
@@ -16,21 +16,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 qmetaobject = "0.2"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
 actix-web = "4"
 actix-ws = "0.3"
-reqwest = { version = "0.12", features = ["json"] }
-tokio-tungstenite = "0.24"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 mdns-sd = "0.11"
 log = "0.4"
 env_logger = "0.11"
 dirs = "5"
-uuid = { version = "1", features = ["v4"] }
-sntpc = "0.3"
-async-trait = "0.1"
 actix-cors = "0.7"
-lazy_static = "1.5"
 libc = "0.2"
 
 [build-dependencies]
 qmetaobject = "0.2"
+
+[lints.rust]
+unused = "warn"

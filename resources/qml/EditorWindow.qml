@@ -191,7 +191,17 @@ ApplicationWindow {
             pushSnapshot("编辑考试信息")
             editorBackend.markUnsaved()
             editorBackend.validateConfigWithDetails(buildConfigJson())
+            editorBackend.update_exam_preview(-1)
         }
+    }
+
+    // ── Preview refresh timer — 每 30 秒更新预览倒计时 ──
+    Timer {
+        id: previewRefreshTimer
+        interval: 30000
+        running: true
+        repeat: true
+        onTriggered: editorBackend.update_exam_preview(-1)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -545,6 +555,117 @@ ApplicationWindow {
                                 }
 
                                 Item { Layout.fillHeight: true }
+                            }
+
+                            // ── 实时预览卡片 ──
+                            Material {
+                                id: previewCard
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: previewContent.implicitHeight + Theme.spacing24 * 2
+                                tier: Material.Elevated
+                                radius: Theme.radiusMedium
+                                visible: previewData.status && previewData.status !== ""
+
+                                readonly property var previewData: {
+                                    if (!editorBackend.examPreviewJson || editorBackend.examPreviewJson.length === 0) {
+                                        return {}
+                                    }
+                                    try {
+                                        return JSON.parse(editorBackend.examPreviewJson)
+                                    } catch (e) {
+                                        return {}
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    id: previewContent
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spacing16
+                                    spacing: Theme.spacing12
+
+                                    Text {
+                                        text: "实时预览"
+                                        font.pixelSize: Theme.typeCaption1
+                                        font.weight: Theme.weightSemibold
+                                        color: Theme.mutedForeground
+                                        font.family: Theme.fontSans
+                                    }
+
+                                    // 状态徽章 + 倒计时
+                                    RowLayout {
+                                        spacing: Theme.spacing12
+
+                                        Rectangle {
+                                            height: 24
+                                            width: previewStatusLabel.width + Theme.spacing16
+                                            radius: Theme.radiusPill
+                                            color: Qt.alpha(previewStatusColor(), 0.15)
+
+                                            readonly property string statusText: previewCard.previewData.statusText || ""
+
+                                            function previewStatusColor() {
+                                                switch (previewCard.previewData.status) {
+                                                    case "InProgress": return Theme.success
+                                                    case "Pending": return Theme.warning
+                                                    case "Completed": return Theme.warning
+                                                    default: return Theme.mutedForeground
+                                                }
+                                            }
+
+                                            Text {
+                                                id: previewStatusLabel
+                                                anchors.centerIn: parent
+                                                text: parent.statusText
+                                                color: parent.previewStatusColor()
+                                                font.family: Theme.fontSans
+                                                font.pixelSize: Theme.typeCaption1
+                                                font.weight: Theme.weightMedium
+                                            }
+                                        }
+
+                                        Text {
+                                            text: previewCard.previewData.timeRange || ""
+                                            color: Theme.mutedForeground
+                                            font.family: Theme.fontSans
+                                            font.pixelSize: Theme.typeCaption1
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+                                    }
+
+                                    // 大字体倒计时
+                                    Text {
+                                        id: previewCountdownText
+                                        text: previewCard.previewData.remainingTime || "--:--"
+                                        font.pixelSize: Theme.typeTitle1
+                                        font.weight: Theme.weightBold
+                                        font.family: Theme.fontMono
+                                        color: (previewCard.previewData.alertTime > 0
+                                                && previewCard.previewData.remainingMs > 0
+                                                && previewCard.previewData.remainingMs <= previewCard.previewData.alertTime * 60000)
+                                               ? Theme.destructive
+                                               : Theme.foreground
+                                        Layout.fillWidth: true
+                                    }
+
+                                    // 进度条
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 6
+                                        visible: previewCard.previewData.progress > 0
+
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            radius: 3
+                                            color: Qt.alpha(Theme.foreground, 0.12)
+                                        }
+                                        Rectangle {
+                                            width: parent.width * (previewCard.previewData.progress || 0)
+                                            height: parent.height
+                                            radius: 3
+                                            color: Theme.primary
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -1355,6 +1476,7 @@ ApplicationWindow {
         }
         currentExamIndex = index
         syncTabBarCurrentIndex()
+        editorBackend.update_exam_preview(index)
     }
 
     function activateTab(examIndex) {

@@ -2,8 +2,10 @@
 #![allow(non_snake_case)]
 
 use crate::core::parser;
+use crate::core::player;
 use crate::core::types::ExamConfig;
 use crate::core::utils::{aeterna_config_dir, strip_file_prefix};
+use chrono::Local;
 use qmetaobject::*;
 use std::path::Path;
 use std::sync::Mutex;
@@ -25,6 +27,8 @@ pub struct EditorBackend {
     errorDetails: qt_property!(QString; READ error_details NOTIFY errorDetailsChanged),
     recentFilesJson: qt_property!(QString; READ recent_files_json NOTIFY recentFilesJsonChanged),
     validationReportJson: qt_property!(QString; READ validation_report_json NOTIFY validationReportJsonChanged),
+    previewExamIndex: qt_property!(i32; READ preview_exam_index WRITE set_preview_exam_index NOTIFY previewExamIndexChanged),
+    examPreviewJson: qt_property!(QString; READ exam_preview_json NOTIFY examPreviewJsonChanged),
 
     configValidChanged: qt_signal!(),
     examCountChanged: qt_signal!(),
@@ -34,6 +38,8 @@ pub struct EditorBackend {
     errorDetailsChanged: qt_signal!(),
     recentFilesJsonChanged: qt_signal!(),
     validationReportJsonChanged: qt_signal!(),
+    previewExamIndexChanged: qt_signal!(),
+    examPreviewJsonChanged: qt_signal!(),
     closeWindowRequested: qt_signal!(),
 
     loadFile: qt_method!(fn(&self, path: QString) -> bool),
@@ -49,6 +55,7 @@ pub struct EditorBackend {
     sortExamInfos: qt_method!(fn(&self, json: QString) -> QString),
     requestClose: qt_method!(fn(&self)),
     confirmClose: qt_method!(fn(&self, save: bool) -> bool),
+    update_exam_preview: qt_method!(fn(&self, index: i32)),
 
     _config: Mutex<Option<ExamConfig>>,
     _valid: Mutex<bool>,
@@ -59,6 +66,8 @@ pub struct EditorBackend {
     _recent_files: Mutex<Vec<String>>,
     _recent_files_loaded: Mutex<bool>,
     _validation_report_json: Mutex<String>,
+    _preview_exam_index: Mutex<i32>,
+    _exam_preview_json: Mutex<String>,
 }
 
 impl EditorBackend {
@@ -104,6 +113,81 @@ impl EditorBackend {
 
     fn validation_report_json(&self) -> QString {
         QString::from(self._validation_report_json.lock().unwrap().as_str())
+    }
+
+    fn preview_exam_index(&self) -> i32 {
+        *self._preview_exam_index.lock().unwrap()
+    }
+
+    fn set_preview_exam_index(&self, value: i32) {
+        *self._preview_exam_index.lock().unwrap() = value;
+        self.previewExamIndexChanged();
+    }
+
+    fn exam_preview_json(&self) -> QString {
+        QString::from(self._exam_preview_json.lock().unwrap().as_str())
+    }
+
+    fn update_exam_preview(&self, index: i32) {
+        if index >= 0 {
+            self.set_preview_exam_index(index);
+        }
+        let config = self._config.lock().unwrap();
+        let exam = match config.as_ref().and_then(|c| {
+            let idx = *self._preview_exam_index.lock().unwrap() as usize;
+            if idx < c.exam_infos.len() {
+                Some(&c.exam_infos[idx])
+            } else {
+                None
+            }
+        }) {
+            Some(e) => e.clone(),
+            None => {
+                *self._exam_preview_json.lock().unwrap() = String::from("{}");
+                self.examPreviewJsonChanged();
+                return;
+            }
+        };
+        drop(config);
+
+        // 确保时间戳已缓存
+        let mut exam_for_compute = exam.clone();
+        if exam_for_compute.start_ts == 0 && exam_for_compute.end_ts == 0 {
+            exam_for_compute.cache_timestamps();
+        }
+
+        let now_ms = Local::now().timestamp_millis();
+        let status = player::compute_exam_status(&exam_for_compute, now_ms);
+        let time_range = if let (Some(s), Some(e)) = (
+            crate::core::utils::parse_date_time(&exam.start),
+            crate::core::utils::parse_date_time(&exam.end),
+        ) {
+            format!("{} - {}", s.format("%H:%M"), e.format("%H:%M"))
+        } else {
+            "时间待设置".to_string()
+        };
+
+        let json = serde_json::json!({
+            "status": format!("{:?}", status.status),
+            "statusText": match status.status {
+                player::ExamStatus::Pending => "未开始",
+                player::ExamStatus::InProgress => "进行中",
+                player::ExamStatus::Completed => "已结束",
+                player::ExamStatus::Unknown => "",
+            },
+            "remainingTime": if status.time_remaining_ms.is_some() {
+                player::format_duration(status.time_remaining_ms.unwrap())
+            } else {
+                String::new()
+            },
+            "remainingMs": status.time_remaining_ms.unwrap_or(0),
+            "progress": status.progress.unwrap_or(0.0),
+            "timeRange": time_range,
+            "alertTime": exam.alert_time
+        });
+
+        *self._exam_preview_json.lock().unwrap() = serde_json::to_string(&json).unwrap_or_default();
+        self.examPreviewJsonChanged();
     }
 
     /// 返回最近文件持久化路径。
@@ -193,6 +277,7 @@ impl EditorBackend {
                     "配置验证失败".to_string()
                 };
                 self.emit_all();
+                self.update_exam_preview(-1);
                 ::log::info!("EditorBackend: loaded config from {}", path_str);
                 true
             }
@@ -284,6 +369,7 @@ impl EditorBackend {
                     "配置无效（字段不合法或时间重叠）".to_string()
                 };
                 self.emit_all();
+                self.update_exam_preview(-1);
                 valid
             }
             Err(e) => {
@@ -371,6 +457,7 @@ impl EditorBackend {
 
         self.emit_all();
         self.validationReportJsonChanged();
+        self.update_exam_preview(-1);
     }
 
     /// 添加文件路径到最近文件列表，移到最前并去重，最多保留 10 条。

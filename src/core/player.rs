@@ -661,6 +661,70 @@ impl Drop for PlayerCore {
     }
 }
 
+/// 纯函数：计算单场考试相对于给定参考时间的预览状态。
+///
+/// 不依赖 [`PlayerCore`] 状态机，适合编辑器实时预览等场景。
+/// 逻辑与 [`PlayerCore::exam_status`] 一致，但以 `now_ms` 替代
+/// PlayerCore 内部的 `current_time_ms`。
+///
+/// `exam` 的 `start_ts` / `end_ts` 必须已通过
+/// [`ExamInfo::cache_timestamps`] 填充，否则结果不可预测。
+pub fn compute_exam_status(exam: &ExamInfo, now_ms: i64) -> ExamStatusInfo {
+    let start_ms = exam.start_ts;
+    let end_ms = exam.end_ts;
+
+    if now_ms < start_ms {
+        let remaining = start_ms - now_ms;
+        ExamStatusInfo {
+            status: ExamStatus::Pending,
+            message: format!("未开始 · 开始时间 {}", exam.start),
+            time_remaining_ms: Some(remaining),
+            progress: None,
+        }
+    } else if now_ms >= start_ms && now_ms < end_ms {
+        let remaining = end_ms - now_ms;
+        let total = end_ms - start_ms;
+        let elapsed = now_ms - start_ms;
+        let progress = if total > 0 {
+            (elapsed as f64 / total as f64).min(1.0)
+        } else {
+            0.0
+        };
+
+        ExamStatusInfo {
+            status: ExamStatus::InProgress,
+            message: format!("将于 {} 结束", exam.end),
+            time_remaining_ms: Some(remaining),
+            progress: Some(progress),
+        }
+    } else {
+        ExamStatusInfo {
+            status: ExamStatus::Completed,
+            message: "已结束".to_string(),
+            time_remaining_ms: None,
+            progress: None,
+        }
+    }
+}
+
+/// 格式化毫秒时长为 H:MM:SS 或 MM:SS。
+///
+/// 对应 TS 的 `ExamDataProcessor.formatDuration`。
+/// 与 `PlayerCore` 内部实现相同，作为模块级公开函数
+/// 供编辑器等非 PlayerCore 上下文使用。
+pub fn format_duration(ms: i64) -> String {
+    let total_seconds = (ms / 1000).max(0);
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{}:{:02}:{:02}", hours, minutes, seconds)
+    } else {
+        format!("{:02}:{:02}", minutes, seconds)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1213,5 +1277,67 @@ mod tests {
 
         assert_eq!(start_count.load(Ordering::SeqCst), 1);
         assert_eq!(player.task_count(), 0);
+    }
+
+    // ── compute_exam_status 单元测试 ──
+
+    fn make_exam_for_preview(name: &str, start: &str, end: &str, alert_time: i32) -> ExamInfo {
+        let mut exam = ExamInfo {
+            name: name.to_string(),
+            start: start.to_string(),
+            end: end.to_string(),
+            alert_time,
+            materials: None,
+            start_ts: 0,
+            end_ts: 0,
+        };
+        exam.cache_timestamps();
+        exam
+    }
+
+    #[test]
+    fn test_compute_exam_status_pending() {
+        let exam = make_exam_for_preview("语文", "2025-06-15 08:00:00", "2025-06-15 10:00:00", 5);
+        let now = parse_date_time("2025-06-15 07:00:00")
+            .unwrap()
+            .timestamp_millis();
+        let status = compute_exam_status(&exam, now);
+        assert_eq!(status.status, ExamStatus::Pending);
+        assert!(status.time_remaining_ms.is_some());
+        assert!(status.progress.is_none());
+    }
+
+    #[test]
+    fn test_compute_exam_status_in_progress() {
+        let exam = make_exam_for_preview("语文", "2025-06-15 08:00:00", "2025-06-15 10:00:00", 5);
+        let now = parse_date_time("2025-06-15 09:00:00")
+            .unwrap()
+            .timestamp_millis();
+        let status = compute_exam_status(&exam, now);
+        assert_eq!(status.status, ExamStatus::InProgress);
+        assert!(status.time_remaining_ms.is_some());
+        let progress = status.progress.unwrap();
+        assert!(progress > 0.0 && progress < 1.0); // 约 50%
+    }
+
+    #[test]
+    fn test_compute_exam_status_completed() {
+        let exam = make_exam_for_preview("语文", "2025-06-15 08:00:00", "2025-06-15 10:00:00", 5);
+        let now = parse_date_time("2025-06-15 11:00:00")
+            .unwrap()
+            .timestamp_millis();
+        let status = compute_exam_status(&exam, now);
+        assert_eq!(status.status, ExamStatus::Completed);
+        assert!(status.time_remaining_ms.is_none());
+        assert!(status.progress.is_none());
+    }
+
+    #[test]
+    fn test_compute_exam_status_format_duration() {
+        assert_eq!(format_duration(0), "00:00");
+        assert_eq!(format_duration(30_000), "00:30"); // 30 seconds
+        assert_eq!(format_duration(60_000), "01:00"); // 1 minute
+        assert_eq!(format_duration(5 * 60_000), "05:00"); // 5 minutes
+        assert_eq!(format_duration(60 * 60_000), "1:00:00"); // 1 hour
     }
 }

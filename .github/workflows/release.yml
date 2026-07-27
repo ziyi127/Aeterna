@@ -96,26 +96,43 @@ jobs:
 
           cp "$BINARY" bundle/usr/bin/
 
-          # Collect all linked .so (including Qt)
+          # Collect only the Qt shared libraries we actually need
           ldd "$BINARY" \
             | awk '/=> \//{print $3}' \
+            | grep -E 'libQt|libicu|libxkbcommon|libfontconfig|libfreetype' \
             | while read lib; do
                 [ -n "$lib" ] && cp -n "$lib" bundle/usr/lib/ 2>/dev/null || true
               done
 
-          # Qt QML imports
-          QMLDIR=$(find /usr/lib /usr/lib64 -maxdepth 3 -path "*/qt6/qml" -type d 2>/dev/null | head -1)
-          if [ -n "$QMLDIR" ]; then
-            mkdir -p bundle/usr/lib/qt6
-            cp -r "$QMLDIR" bundle/usr/lib/qt6/qml
-          fi
+          patchelf --set-rpath '$ORIGIN/../lib' bundle/usr/bin/aeterna
 
-          # Qt plugins
-          PLUGINDIR=$(find /usr/lib /usr/lib64 -maxdepth 3 -path "*/qt6/plugins" -type d 2>/dev/null | head -1)
-          if [ -n "$PLUGINDIR" ]; then
-            mkdir -p bundle/usr/lib/qt6
-            cp -r "$PLUGINDIR" bundle/usr/lib/qt6/plugins
-          fi
+          # Platform plug-in is required for GUI
+          mkdir -p bundle/usr/lib/qt6/plugins/platforms
+          find /usr/lib /usr/lib64 -name 'libqwayland*' -o -name 'libqxcb*' -o -name 'libqlinuxfb*' -o -name 'libqoffscreen*' -o -name 'libqminimal*' 2>/dev/null | head -10 | while read p; do
+            cp -n "$p" bundle/usr/lib/qt6/plugins/platforms/ 2>/dev/null || true
+          done
+
+          mkdir -p bundle/usr/lib/qt6/qml/QtQuick/Controls
+          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQuick/Controls" -type d 2>/dev/null | head -1 | while read d; do
+            mkdir -p bundle/usr/lib/qt6/qml/QtQuick
+            cp -r "$d" bundle/usr/lib/qt6/qml/QtQuick/
+          done
+
+          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQuick/Templates" -type d 2>/dev/null | head -1 | while read d; do
+            cp -r "$d" bundle/usr/lib/qt6/qml/QtQuick/
+          done
+
+          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQuick/Layouts" -type d 2>/dev/null | head -1 | while read d; do
+            cp -r "$d" bundle/usr/lib/qt6/qml/QtQuick/
+          done
+
+          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQml" -type d 2>/dev/null | head -1 | while read d; do
+            cp -r "$d" bundle/usr/lib/qt6/qml/
+          done
+
+          find /usr/lib /usr/lib64 -path "*/qt6/qml/Qt" -maxdepth 0 -type d 2>/dev/null | head -1 | while read d; do
+            cp -r "$d" bundle/usr/lib/qt6/qml/Qt 2>/dev/null || true
+          done
 
           # qt.conf
           cat > bundle/usr/bin/qt.conf << 'EOF'
@@ -124,9 +141,6 @@ jobs:
           Imports = ../lib/qt6/qml
           Qml2Imports = ../lib/qt6/qml
           EOF
-
-          # Set RPATH
-          patchelf --set-rpath '$ORIGIN/../lib' bundle/usr/bin/aeterna
 
       - name: Package
         run: |
@@ -169,7 +183,14 @@ jobs:
 
       - name: Bundle with windeployqt
         run: |
-          windeployqt.exe --qmldir resources/qml target\x86_64-pc-windows-msvc\release\aeterna.exe
+          windeployqt.exe --qmldir resources/qml --no-compiler-runtime --no-translations target\x86_64-pc-windows-msvc\release\aeterna.exe
+          # Strip PDB files — windeployqt may copy them but we don't ship debug symbols.
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue target\x86_64-pc-windows-msvc\release\*.pdb
+          # Remove unnecessary Qt plugins (bearer, sensord, qmltooling, etc.)
+          $pluginDir = "target\x86_64-pc-windows-msvc\release"
+          @("bearer", "sensord", "position", "qmltooling", "gamepads", "multimedia", "texttospeech", "scenegraph", "geometryloaders", "renderplugins", "virtualkeyboard") | ForEach-Object {
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$pluginDir\$_"
+          }
         shell: pwsh
         env:
           Qt6_DIR: D:\a\Qt\6.8.3\msvc2022_64
@@ -222,12 +243,20 @@ jobs:
           $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -verbose=1 -qmldir=resources/qml
 
       - name: Package
-        run: zip -r aeterna-arm64-macos.zip aeterna.app
+        run: |
+          # Remove debug symbols from the bundled app
+          find aeterna.app -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
+          find aeterna.app -name 'Qt*_debug*' -delete 2>/dev/null || true
+          zip -r aeterna-arm64-macos.zip aeterna.app
+          # Also ship the bare binary for users who want it
+          cp target/aarch64-apple-darwin/release/aeterna aeterna-arm64-macos
 
       - uses: actions/upload-artifact@v6
         with:
           name: aeterna-arm64-macos
-          path: aeterna-arm64-macos.zip
+          path: |
+            aeterna-arm64-macos.zip
+            aeterna-arm64-macos
 
   # ═══════════════════════════════════════════════
   # Create GitHub Release (only on tag push)

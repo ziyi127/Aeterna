@@ -4,7 +4,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import QtQuick.Window 2.15
 import Qt.labs.platform 1.1 as Platform
-// import QtGraphicalEffects 1.15  // moved to Icon.qml via Qt5Compat.GraphicalEffects
+// import QtGraphicalEffects 1.15  // removed — all effects use native ShaderEffect now
 import Aeterna 1.0
 
 ApplicationWindow {

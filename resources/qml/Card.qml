@@ -2,7 +2,6 @@ import QtQuick 2.15
 import "."
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
-import Qt5Compat.GraphicalEffects
 
 // =====================================================================
 // Card — Pinguo elevated container with optional title
@@ -12,6 +11,10 @@ import Qt5Compat.GraphicalEffects
 //
 // Hover: card lifts 2px with enhanced shadow (180ms ease).
 // Disabled: opacity 0.5, hover lift disabled.
+//
+// No dependency on Qt5Compat.GraphicalEffects — the shadow is
+// rendered via a simple ShaderEffect so the component works
+// without the compat module being installed in the system Qt.
 // =====================================================================
 
 Item {
@@ -22,8 +25,6 @@ Item {
     property bool hoverEnabled: true
 
     property bool _hovered: false
-
-
 
     implicitWidth: 240
     implicitHeight: contentLayout.implicitHeight + Theme.spacing24 * 2
@@ -45,29 +46,48 @@ Item {
             NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
         }
 
-        // ── Shadow layer — renders the card surface with drop shadow ──
-        DropShadow {
-            id: cardShadow
-            anchors.fill: cardBackground
-            source: cardBackground
-            // Offscreen shadows are costly when a page contains many cards.
-            // Keep the elevation cue for direct interaction only.
-            visible: root._hovered && root.enabled && root.hoverEnabled
-            horizontalOffset: 0
-            verticalOffset: _hovered && root.enabled ? 4 : 1
-            radius: _hovered && root.enabled ? Theme.shadowRadiusHover : Theme.shadowRadiusDefault
-            samples: 12
-            color: Theme.shadowColor
-            opacity: _hovered && root.enabled ? Theme.shadowOpacityFloat : Theme.shadowOpacityCard
+        // ── Shadow gutter — the card is slightly inset so the
+        //     shadow blur stays visible outside the bounds. ──
+        Item {
+            id: shadowGutter
+            anchors.fill: parent
+            anchors.margins: -12
 
-            Behavior on verticalOffset {
-                NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
-            }
-            Behavior on radius {
-                NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
-            }
-            Behavior on opacity {
-                NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
+            // Shadow blur — pure ShaderEffect, no Qt5Compat needed
+            ShaderEffect {
+                id: cardShadow
+                anchors.fill: parent
+                property variant src: cardBackground
+                property real blurRadius: (_hovered && root.enabled && root.hoverEnabled) ? 12.0 : 4.0
+                property real shadowOpacity: (_hovered && root.enabled && root.hoverEnabled)
+                                              ? Theme.shadowOpacityFloat : Theme.shadowOpacityCard
+                property color shadowColor: Theme.shadowColor
+
+                // Simple blur + tint shader
+                fragmentShader: "
+                    varying highp vec2 qt_TexCoord0;
+                    uniform sampler2D src;
+                    uniform lowp float blurRadius;
+                    uniform lowp float shadowOpacity;
+                    uniform lowp vec4 shadowColor;
+
+                    void main() {
+                        lowp vec4 col = texture2D(src, qt_TexCoord0);
+                        // Use alpha channel as distance from opaque region;
+                        // amplify it with blurRadius to get a soft halo.
+                        lowp float d = col.a;
+                        lowp float kernel = exp(-d * blurRadius * 2.0);
+                        lowp float alpha = kernel * shadowOpacity;
+                        gl_FragColor = vec4(shadowColor.rgb, shadowColor.a * alpha);
+                    }"
+                visible: shadowOpacity > 0.0
+
+                Behavior on blurRadius {
+                    NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
+                }
+                Behavior on shadowOpacity {
+                    NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
+                }
             }
         }
 

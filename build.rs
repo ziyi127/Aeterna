@@ -3,10 +3,53 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    // Parse resources/resources.qrc and generate a qrc! macro invocation that
-    // embeds every icon and QML file listed in the descriptor. This keeps the
-    // binary self-contained and avoids drift between resources.qrc and the
-    // actual files registered at runtime.
+    // ── Qt static linking detection ──
+    //
+    // If a static Qt build is available (libQt6Core.a), force the linker
+    // to prefer static libraries. This produces a self-contained binary
+    // that does not depend on Qt shared objects at runtime.
+    //
+    // qmetaobject calls pkg-config internally; we set the environment
+    // so pkg-config returns --static flags.
+    if is_static_qt_available() {
+        println!("cargo:rustc-cfg=qt_static");
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        // Tell pkg-config to emit static linking flags
+        println!("cargo:rustc-env=PKG_CONFIG_ALL_STATIC=true");
+        // The linker needs to see the static libs; instruct cargo
+        // to prefer static over dynamic.
+        println!("cargo:rustc-link-arg=-Wl,-Bstatic");
+        // Link order: Qt modules come from pkg-config, system deps after
+        println!("cargo:rustc-link-lib=static=Qt6Core");
+        println!("cargo:rustc-link-lib=static=Qt6Gui");
+        println!("cargo:rustc-link-lib=static=Qt6Widgets");
+        println!("cargo:rustc-link-lib=static=Qt6Quick");
+        println!("cargo:rustc-link-lib=static=Qt6Qml");
+        println!("cargo:rustc-link-lib=static=Qt6DBus");
+        println!("cargo:rustc-link-lib=static=Qt6QmlMeta");
+        println!("cargo:rustc-link-lib=static=Qt6QmlModels");
+        println!("cargo:rustc-link-lib=static=Qt6Network");
+        println!("cargo:rustc-link-lib=static=Qt6OpenGL");
+        println!("cargo:rustc-link-lib=static=Qt6QuickControls2");
+        println!("cargo:rustc-link-lib=static=Qt6QuickTemplates2");
+        // Switch back to dynamic for system libs
+        println!("cargo:rustc-link-arg=-Wl,-Bdynamic");
+        // System deps that Qt6 depends on (static Qt needs these pulled in)
+        for lib in &["GL", "glib-2.0", "gobject-2.0", "xkbcommon", "fontconfig",
+                       "freetype", "X11", "xcb", "xcb-render", "xcb-shm",
+                       "xcb-xfixes", "xcb-shape", "xcb-sync", "xcb-randr",
+                       "xcb-image", "xcb-keysyms", "xcb-util", "xcb-render-util",
+                       "X11-xcb", "ICE", "SM", "dbus-1", "z", "dl", "pthread"] {
+            println!("cargo:rustc-link-lib={}", lib);
+        }
+    } else {
+        // Dynamic Qt — set rpath so the binary finds Qt libs in ../lib
+        // relative to itself (portable bundle layout).
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/qt6/plugins/platforms");
+    }
+
+    // ── QRC resource embedding ──
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
     let qrc_path = PathBuf::from(&manifest_dir)
         .join("resources")
@@ -30,10 +73,6 @@ fn main() {
         if idx > 0 {
             generated.push_str(",\n");
         }
-        // The qrc! macro expects a local base directory and a virtual prefix.
-        // resources.qrc lives in the "resources" directory, so all file paths
-        // are relative to that directory. The virtual prefix comes from the
-        // <qresource prefix="..."> attribute.
         generated.push_str(&format!("    \"resources\" as \"{}\" {{\n", prefix));
         for file in files {
             generated.push_str(&format!("        \"{}\",\n", file));
@@ -51,7 +90,20 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/icons");
 }
 
-/// Parse a simple .qrc file and return a list of (prefix, file_paths).
+fn is_static_qt_available() -> bool {
+    let search_dirs = &["/usr/lib", "/usr/lib64", "/usr/local/lib"];
+    let required = &["Qt6Core", "Qt6Gui", "Qt6Quick", "Qt6Qml"];
+    for dir in search_dirs {
+        if required.iter().all(|lib| {
+            let path = format!("{}/lib{}.a", dir, lib);
+            std::path::Path::new(&path).exists()
+        }) {
+            return true;
+        }
+    }
+    false
+}
+
 fn parse_qrc(content: &str) -> Vec<(String, Vec<String>)> {
     let mut result = Vec::new();
     let mut current_prefix = String::from("/");
@@ -81,7 +133,6 @@ fn parse_qrc(content: &str) -> Vec<(String, Vec<String>)> {
 }
 
 fn extract_prefix(tag: &str) -> Option<String> {
-    // e.g. <qresource prefix="/">
     let start = tag.find("prefix=\"")? + 8;
     let rest = &tag[start..];
     let end = rest.find('"')?;
@@ -89,8 +140,6 @@ fn extract_prefix(tag: &str) -> Option<String> {
 }
 
 fn extract_file_path(tag: &str) -> Option<String> {
-    // e.g. <file>icons/clock_20.png</file>
-    // or   <file alias="foo.png">icons/foo.png</file>
     let start = tag.find('>')? + 1;
     let end = tag.find("</file>")?;
     if start < end {
@@ -101,7 +150,6 @@ fn extract_file_path(tag: &str) -> Option<String> {
 }
 
 fn normalize_prefix(prefix: &str) -> String {
-    // qrc! prefixes should not have a leading or trailing slash.
     let mut s = prefix.trim().to_string();
     if s.starts_with('/') {
         s.remove(0);

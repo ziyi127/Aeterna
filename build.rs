@@ -35,11 +35,33 @@ fn main() {
         // Switch back to dynamic for system libs
         println!("cargo:rustc-link-arg=-Wl,-Bdynamic");
         // System deps that Qt6 depends on (static Qt needs these pulled in)
-        for lib in &["GL", "glib-2.0", "gobject-2.0", "xkbcommon", "fontconfig",
-                       "freetype", "X11", "xcb", "xcb-render", "xcb-shm",
-                       "xcb-xfixes", "xcb-shape", "xcb-sync", "xcb-randr",
-                       "xcb-image", "xcb-keysyms", "xcb-util", "xcb-render-util",
-                       "X11-xcb", "ICE", "SM", "dbus-1", "z", "dl", "pthread"] {
+        for lib in &[
+            "GL",
+            "glib-2.0",
+            "gobject-2.0",
+            "xkbcommon",
+            "fontconfig",
+            "freetype",
+            "X11",
+            "xcb",
+            "xcb-render",
+            "xcb-shm",
+            "xcb-xfixes",
+            "xcb-shape",
+            "xcb-sync",
+            "xcb-randr",
+            "xcb-image",
+            "xcb-keysyms",
+            "xcb-util",
+            "xcb-render-util",
+            "X11-xcb",
+            "ICE",
+            "SM",
+            "dbus-1",
+            "z",
+            "dl",
+            "pthread",
+        ] {
             println!("cargo:rustc-link-lib={}", lib);
         }
     } else {

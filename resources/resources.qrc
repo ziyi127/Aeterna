@@ -158,7 +158,6 @@
         <file>qml/PinguoTextField.qml</file>
         <file>qml/PlaybackSettingsDrawer.qml</file>
         <file>qml/RoomNumberKeypad.qml</file>
-        <file>qml/PluginStoreWindow.qml</file>
         <file>qml/SettingsWindow.qml</file>
         <file>qml/Theme.qml</file>
         <file>qml/qmldir</file>

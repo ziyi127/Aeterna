@@ -15,7 +15,7 @@ use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// 速率限制器
@@ -85,6 +85,7 @@ impl RateLimiter {
     }
 
     /// 重置指定 IP 的计数器
+    #[allow(dead_code)]
     pub fn reset(&self, ip: &str) {
         if let Ok(mut requests) = self.requests.lock() {
             requests.remove(ip);
@@ -92,6 +93,7 @@ impl RateLimiter {
     }
 
     /// 重置所有计数器
+    #[allow(dead_code)]
     pub fn reset_all(&self) {
         if let Ok(mut requests) = self.requests.lock() {
             requests.clear();
@@ -177,7 +179,7 @@ pub struct ExamInfoRequest {
 pub struct HttpApiService {
     config: Mutex<ApiConfig>,
     start_time: std::time::Instant,
-    rate_limiter: RateLimiter,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl HttpApiService {
@@ -185,28 +187,34 @@ impl HttpApiService {
         HttpApiService {
             config: Mutex::new(ApiConfig::default()),
             start_time: std::time::Instant::now(),
-            rate_limiter: RateLimiter::default_limiter(),
+            rate_limiter: Arc::new(RateLimiter::default_limiter()),
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_config(config: ApiConfig) -> Self {
         HttpApiService {
             config: Mutex::new(config),
             start_time: std::time::Instant::now(),
-            rate_limiter: RateLimiter::default_limiter(),
+            rate_limiter: Arc::new(RateLimiter::default_limiter()),
         }
     }
 
     /// 创建自定义速率限制的 API 服务
+    #[allow(dead_code)]
     pub fn with_rate_limit(max_requests: usize, window_seconds: u64) -> Self {
         HttpApiService {
             config: Mutex::new(ApiConfig::default()),
             start_time: std::time::Instant::now(),
-            rate_limiter: RateLimiter::new(max_requests, Duration::from_secs(window_seconds)),
+            rate_limiter: Arc::new(RateLimiter::new(
+                max_requests,
+                Duration::from_secs(window_seconds),
+            )),
         }
     }
 
     /// 更新配置
+    #[allow(dead_code)]
     pub fn update_config(&self, config: ApiConfig) {
         if let Ok(mut c) = self.config.lock() {
             *c = config;
@@ -229,6 +237,7 @@ impl HttpApiService {
         let token_auth = config.token_auth;
         let allow_cors = config.allow_cors;
         let start_time = self.start_time;
+        let rate_limiter = self.rate_limiter.clone();
 
         info!("Starting HTTP API server on {}", bind_addr);
 
@@ -242,8 +251,8 @@ impl HttpApiService {
                 Cors::default()
             };
 
-            // 创建每个 worker 独立的速率限制器
-            let rate_limiter = web::Data::new(RateLimiter::default_limiter());
+            // 所有 worker 共享同一个限制器，保证配置的额度真实生效。
+            let rate_limiter = web::Data::new(rate_limiter.clone());
 
             App::new()
                 .wrap(cors)
@@ -276,11 +285,13 @@ impl HttpApiService {
     }
 
     /// 获取运行时间（秒）
+    #[allow(dead_code)]
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
     }
 
     /// 获取当前状态
+    #[allow(dead_code)]
     pub fn status(&self) -> ApiStatus {
         let config = self.config.lock().unwrap();
         ApiStatus {

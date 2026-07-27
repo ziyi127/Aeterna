@@ -8,6 +8,7 @@ use std::time::Duration;
 
 /// NTP 时间同步状态
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum NtpSyncStatus {
     Idle,
     Syncing,
@@ -63,6 +64,7 @@ impl NtpService {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_servers(&self, servers: Vec<String>) {
         if let Ok(mut config) = self.config.lock() {
             config.servers = servers;
@@ -87,7 +89,7 @@ impl NtpService {
         for server in &config.servers {
             info!("Attempting NTP sync with server: {}", server);
 
-            match self.sync_with_server(server, config.timeout) {
+            match self.sync_with_server(server, config.port, config.timeout) {
                 Ok(result) => {
                     info!(
                         "NTP sync successful: server={}, offset={}ms",
@@ -117,10 +119,15 @@ impl NtpService {
         result
     }
 
-    fn sync_with_server(&self, server: &str, timeout: Duration) -> Result<NtpSyncResult, String> {
+    fn sync_with_server(
+        &self,
+        server: &str,
+        port: u16,
+        timeout: Duration,
+    ) -> Result<NtpSyncResult, String> {
         use std::net::ToSocketAddrs;
 
-        let addr_str = format!("{}:123", server);
+        let addr_str = format!("{}:{}", server, port);
         let addrs: Vec<std::net::SocketAddr> = addr_str
             .to_socket_addrs()
             .map_err(|e| format!("DNS 解析失败: {}", e))?
@@ -176,10 +183,12 @@ impl NtpService {
         })
     }
 
+    #[allow(dead_code)]
     pub fn last_result(&self) -> Option<NtpSyncResult> {
         self.last_result.lock().ok()?.clone()
     }
 
+    #[allow(dead_code)]
     pub fn offset_ms(&self) -> Option<i64> {
         self.last_result()
             .filter(|r| r.status == NtpSyncStatus::Synced)

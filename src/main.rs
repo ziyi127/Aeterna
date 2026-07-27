@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 mod core;
-mod plugins;
 mod services;
 mod ui;
 mod ui_access;
@@ -81,15 +80,8 @@ fn main() {
     }
     ::log::info!("HTTP API server starting on port 9527");
 
-    // ── Initialize Plugin Manager ──
-    let plugin_manager = Arc::new(plugins::PluginManager::new());
-    {
-        let plugin_manager = plugin_manager.clone();
-        std::thread::spawn(move || match plugin_manager.load_all() {
-            Ok(count) => ::log::info!("Loaded {} plugins", count),
-            Err(e) => ::log::warn!("Failed to load plugins: {}", e),
-        });
-    }
+    // 插件能力尚未面向用户开放，因此不扫描或加载外部插件。这样既避免
+    // 启动时的额外 I/O 和线程开销，也不会让未完成插件影响考场运行。
 
     // ── Start Cast Service (disabled by default) ──
     let cast_service = Arc::new(services::cast::CastService::with_config(

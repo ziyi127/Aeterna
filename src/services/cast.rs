@@ -7,6 +7,7 @@ use std::time::Duration;
 
 /// 发现的设备信息
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DiscoveredDevice {
     pub name: String,
     pub hostname: String,
@@ -18,6 +19,7 @@ pub struct DiscoveredDevice {
 
 /// 投屏服务配置
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CastConfig {
     pub enabled: bool,
     pub allow_discovery: bool,
@@ -41,6 +43,7 @@ impl Default for CastConfig {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum CastStatus {
     Stopped,
     Starting,
@@ -58,6 +61,8 @@ pub struct CastService {
 }
 
 impl CastService {
+    // CastService 是公开 API 的一部分，多数方法仅在测试中使用。
+    // 禁止对整个 impl 块加 dead_code 以避免隐藏未来真正无用的代码。
     pub fn new() -> Self {
         Self::with_config(CastConfig::default())
     }
@@ -219,6 +224,7 @@ impl CastService {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn get_devices(&self) -> Vec<DiscoveredDevice> {
         self.devices
             .lock()
@@ -226,6 +232,7 @@ impl CastService {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn get_status(&self) -> CastStatus {
         self.status
             .lock()
@@ -233,12 +240,14 @@ impl CastService {
             .unwrap_or(CastStatus::Error("状态锁定失败".to_string()))
     }
 
+    #[allow(dead_code)]
     pub fn update_config(&self, config: CastConfig) {
         if let Ok(mut c) = self.config.lock() {
             *c = config;
         }
     }
 
+    #[allow(dead_code)]
     pub fn cast_to_device(
         &self,
         device: &DiscoveredDevice,

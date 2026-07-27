@@ -461,8 +461,8 @@ ApplicationWindow {
                                                 urlPlayerDialog.open()
                                             } else if (action === "openSettings") {
                                                 settingsLoader.openSettings()
-                                            } else if (action === "openPluginStore") {
-                                                pluginStoreLoader.openStore()
+                                            } else if (action === "pluginsComingSoon") {
+                                                pluginsComingSoonDialog.open()
                                             } else if (action === "openAbout") {
                                                 aboutDialog.open()
                                             }
@@ -803,6 +803,47 @@ ApplicationWindow {
         id: aboutDialog
     }
 
+    Dialog {
+        id: pluginsComingSoonDialog
+        title: "插件功能即将上线"
+        modal: true
+        anchors.centerIn: parent
+        width: 360
+        padding: Theme.spacing24
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        standardButtons: Dialog.NoButton
+        background: Rectangle {
+            color: Theme.materialOverlay
+            radius: Theme.radiusLarge
+            border.width: 1
+            border.color: Theme.hairline
+        }
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing16
+            Icon {
+                name: "puzzle"
+                size: 28
+                tier: Icon.Tertiary
+                Layout.alignment: Qt.AlignHCenter
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "插件服务仍在完善中，暂不支持安装、卸载或从商店下载插件。"
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                color: Theme.foreground
+                font.pixelSize: Theme.typeSubhead
+                font.family: Theme.fontSans
+            }
+            PinguoButton {
+                text: "知道了"
+                variant: PinguoButton.Primary
+                Layout.alignment: Qt.AlignHCenter
+                onClicked: pluginsComingSoonDialog.close()
+            }
+        }
+    }
+
     // ── Hint tooltip ──────────────────────────────────────────
     ToolTip {
         id: hintToolTip
@@ -925,7 +966,7 @@ ApplicationWindow {
         ListElement { label: "放映器";     iconName: "play";         action: "player";         hint: "" }
         ListElement { label: "从URL放映";  iconName: "link";         action: "urlPlayer";      hint: "" }
         ListElement { label: "设置";       iconName: "gear";         action: "openSettings";   hint: "" }
-        ListElement { label: "插件商店";   iconName: "puzzle";       action: "openPluginStore"; hint: "" }
+        ListElement { label: "插件服务";   iconName: "puzzle";       action: "pluginsComingSoon"; hint: "即将上线" }
         ListElement { label: "帮助";       iconName: "questionmark"; action: "openAbout";      hint: "" }
         ListElement { label: "关于";       iconName: "info";         action: "openAbout";      hint: "" }
     }
@@ -1016,32 +1057,6 @@ ApplicationWindow {
                 doCreate()
             } else if (comp.status === Component.Error) {
                 console.error("Failed to load SettingsWindow: " + comp.errorString())
-            } else {
-                comp.statusChanged.connect(doCreate)
-            }
-        }
-    }
-
-    Loader {
-        id: pluginStoreLoader
-        function openStore() {
-            var comp = Qt.createComponent("qrc:/qml/PluginStoreWindow.qml")
-            function doCreate() {
-                if (comp.status !== Component.Ready) {
-                    console.error("PluginStoreWindow not ready: " + comp.errorString())
-                    return
-                }
-                var win = comp.createObject(mainWindow)
-                if (!win) {
-                    console.error("Failed to create PluginStoreWindow instance")
-                    return
-                }
-                win.show()
-            }
-            if (comp.status === Component.Ready) {
-                doCreate()
-            } else if (comp.status === Component.Error) {
-                console.error("Failed to load PluginStoreWindow: " + comp.errorString())
             } else {
                 comp.statusChanged.connect(doCreate)
             }

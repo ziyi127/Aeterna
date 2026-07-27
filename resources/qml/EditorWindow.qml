@@ -564,7 +564,7 @@ ApplicationWindow {
                                 Layout.preferredHeight: previewContent.implicitHeight + Theme.spacing24 * 2
                                 tier: Material.Elevated
                                 radius: Theme.radiusMedium
-                                visible: previewData.status && previewData.status !== ""
+                                visible: (previewCard.previewData && previewCard.previewData.status) ? true : false
 
                                 readonly property var previewData: {
                                     if (!editorBackend.examPreviewJson || editorBackend.examPreviewJson.length === 0) {

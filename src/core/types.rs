@@ -56,6 +56,7 @@ impl ExamInfo {
     }
 
     /// 创建新的 `ExamInfo`，同时缓存时间戳。
+    #[allow(dead_code)]
     pub fn new(
         name: String,
         start: String,

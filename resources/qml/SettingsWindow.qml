@@ -51,9 +51,7 @@ ApplicationWindow {
         deviceName: "Aeterna-001",
         allowRemoteControl: false,
         autoAcceptCast: false,
-        showStatusBar: true,
-        // Plugins
-        installedPlugins: []
+        showStatusBar: true
     })
 
     // ── Responsive layout helpers ──
@@ -167,7 +165,8 @@ ApplicationWindow {
             Layout.fillHeight: true
             tier: Material.Elevated
             radius: 0
-            bordered: false
+            bordered: true
+            liquidGlass: true
 
             Rectangle {
                 anchors.right: parent.right
@@ -1027,126 +1026,38 @@ ApplicationWindow {
             }
 
             // ═══════════════ Page 6: Plugins ═══════════════
-            Flickable {
-                id: pluginsFlickable
+            Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                clip: true
-                contentWidth: width
-                contentHeight: pluginsMaterial.height
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                Material {
-                    id: pluginsMaterial
-                    width: pluginsFlickable.width
-                    height: pluginsPageContent.implicitHeight + 2 * settingsWindow.contentMargin
-                    tier: Material.Elevated
-                    radius: Theme.radiusLarge
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - Theme.spacing48, 420)
+                    spacing: Theme.spacing16
 
-                    ColumnLayout {
-                        id: pluginsPageContent
-                        anchors.top: parent.top
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.margins: settingsWindow.contentMargin
-                        spacing: Theme.spacing16
-
-                        Text {
-                            text: "插件管理"
-                            font.pixelSize: Theme.typeTitle2
-                            font.weight: Theme.weightBold
-                            font.family: Theme.fontSans
-                            color: Theme.foreground
-                        }
-
-                        Card {
-                            Layout.fillWidth: true
-                            title: "已安装插件"
-                            contentItem: ColumnLayout {
-                                spacing: Theme.spacing8
-
-                                ListView {
-                                    id: installedPluginsList
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: Math.min(200, pluginSettingsModel.count * (Theme.sizeListItemLarge + Theme.spacing8))
-                                    model: ListModel {
-                                        id: pluginSettingsModel
-                                        Component.onCompleted: {
-                                            if (settingsWindow.settings.installedPlugins.length === 0) {
-                                                append({ name: "NTP 时间同步", version: "1.2.0", enabled: true })
-                                                append({ name: "投屏增强", version: "0.9.1", enabled: true })
-                                                append({ name: "数据导出", version: "2.0.0", enabled: false })
-                                            }
-                                        }
-                                    }
-                                    spacing: Theme.spacing8
-
-                                    delegate: RowLayout {
-                                        width: ListView.view.width
-                                        height: Theme.sizeListItemLarge
-                                        spacing: Theme.spacing12
-                                        PinguoCheckBox {
-                                            checked: enabled
-                                            onToggled: {
-                                                model.enabled = checked
-                                                settingsWindow.syncToBackend(); console.log("Settings: plugin", name, "enabled =", checked)
-                                            }
-                                        }
-                                        Text { text: name; color: Theme.foreground; font.pixelSize: Theme.typeSubhead; font.family: Theme.fontSans }
-                                        Text { text: "v" + version; color: Theme.mutedForeground; font.pixelSize: Theme.typeCaption1; font.family: Theme.fontSans }
-                                        Item { Layout.fillWidth: true }
-                                        PinguoButton {
-                                            text: "卸载"
-                                            variant: PinguoButton.Secondary
-                                            onClicked: {
-                                                pluginSettingsModel.remove(index)
-                                                settingsWindow.syncToBackend(); console.log("Settings: uninstalled plugin", name)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        RowLayout {
-                            spacing: Theme.spacing12
-                            PinguoButton {
-                                text: "安装插件…"
-                                variant: PinguoButton.Secondary
-                                Layout.alignment: Qt.AlignLeft
-                                onClicked: {
-                                    settingsWindow.syncToBackend(); console.log("Settings: install plugin from file")
-                                }
-                            }
-                            PinguoButton {
-                                text: "打开插件商店"
-                                variant: PinguoButton.Primary
-                                Layout.alignment: Qt.AlignLeft
-                                onClicked: {
-                                    var comp = Qt.createComponent("qrc:/qml/PluginStoreWindow.qml")
-                                    function doCreate() {
-                                        if (comp.status !== Component.Ready) {
-                                            console.error("PluginStoreWindow not ready: " + comp.errorString())
-                                            return
-                                        }
-                                        var win = comp.createObject(settingsWindow)
-                                        if (!win) {
-                                            console.error("Failed to create PluginStoreWindow instance")
-                                            return
-                                        }
-                                        win.show()
-                                    }
-                                    if (comp.status === Component.Ready) {
-                                        doCreate()
-                                    } else if (comp.status === Component.Error) {
-                                        console.error("Failed to load PluginStoreWindow: " + comp.errorString())
-                                    } else {
-                                        comp.statusChanged.connect(doCreate)
-                                    }
-                                }
-                            }
-                        }
+                    Icon {
+                        name: "puzzle"
+                        size: 48
+                        tier: Icon.Tertiary
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "插件功能即将上线"
+                        color: Theme.foreground
+                        font.pixelSize: Theme.typeTitle2
+                        font.weight: Theme.weightBold
+                        font.family: Theme.fontSans
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "当前版本暂不支持安装、管理或下载插件，避免未完成的功能影响考场使用。"
+                        color: Theme.mutedForeground
+                        font.pixelSize: Theme.typeSubhead
+                        font.family: Theme.fontSans
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
                     }
                 }
             }

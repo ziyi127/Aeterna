@@ -4,21 +4,18 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import Aeterna 1.0
 
-// =====================================================================
-// AboutDialog — App info, credits, and license
-// =====================================================================
-
 Dialog {
     id: root
 
-    title: "关于 Aeterna"
-    width: 420
-    height: 360
+    width: parent ? Math.min(440, Math.max(320, parent.width - Theme.spacing32)) : 400
     modal: true
     anchors.centerIn: parent
-    padding: Theme.spacing32
-    closePolicy: Popup.CloseOnEscape
+    padding: 0
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     standardButtons: Dialog.NoButton
+
+    implicitHeight: bodyColumn.implicitHeight + Theme.spacing32 * 2
+    height: Math.min(implicitHeight, parent ? parent.height - Theme.spacing48 : implicitHeight)
 
     AppInfo { id: appInfo }
 
@@ -30,145 +27,128 @@ Dialog {
     }
 
     enter: Transition {
-        NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: Theme.motionMedium; easing.type: Theme.motionDecelerate }
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motionMedium; easing.type: Theme.motionDecelerate }
     }
     exit: Transition {
-        NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: Theme.motionShort; easing.type: Theme.motionAccelerate }
+        NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.motionShort; easing.type: Theme.motionAccelerate }
     }
 
-    contentItem: ColumnLayout {
+    contentItem: Flickable {
+        id: bodyFlick
         anchors.fill: parent
-        spacing: 0
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        contentWidth: width
+        contentHeight: bodyColumn.implicitHeight + Theme.spacing32 * 2
 
-        // ── App icon + name ──
-        Item {
-            Layout.preferredHeight: 80
-            Layout.fillWidth: true
-
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: Theme.spacing8
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    width: 48
-                    height: 48
-                    radius: Theme.radiusMedium
-                    color: Theme.brand500
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "A"
-                        font.pixelSize: 24
-                        font.weight: Theme.weightBold
-                        font.family: Theme.fontSans
-                        color: "white"
-                    }
-                }
-
-                Text {
-                    text: "Aeterna"
-                    font.pixelSize: Theme.typeTitle2
-                    font.weight: Theme.weightBold
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    Layout.alignment: Qt.AlignHCenter
-                }
+        ScrollBar.vertical: ScrollBar {
+            contentItem: Rectangle {
+                implicitWidth: 6
+                radius: 3
+                color: Qt.alpha(Theme.foreground, 0.24)
             }
         }
 
-        // ── Version info ──
         ColumnLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacing4
+            id: bodyColumn
+            width: bodyFlick.width
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.spacing32
+            anchors.rightMargin: Theme.spacing32
+            anchors.topMargin: Theme.spacing32
+            anchors.bottomMargin: Theme.spacing32
+            spacing: Theme.spacing16
 
+            // ── Logo ──
+            Image {
+                Layout.alignment: Qt.AlignHCenter
+                width: 64
+                height: 64
+                source: "qrc:/icons/icon.png"
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
+                sourceSize.width: 128
+                sourceSize.height: 128
+            }
+
+            // ── App name ──
             Text {
-                text: "版本 " + appInfo.version
+                Layout.alignment: Qt.AlignHCenter
+                text: appInfo.name
+                color: Theme.foreground
+                font.pixelSize: Theme.typeTitle2
+                font.weight: Theme.weightBold
+                font.family: Theme.fontSans
+            }
+
+            // ── Subtitle ──
+            Text {
+                Layout.fillWidth: true
+                text: "考试日程播放与考场计时系统"
                 color: Theme.mutedForeground
-                font.family: Theme.fontSans
                 font.pixelSize: Theme.typeSubhead
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            Text {
-                text: "基于 Rust + Qt6 构建"
-                color: Qt.alpha(Theme.mutedForeground, 0.72)
                 font.family: Theme.fontSans
-                font.pixelSize: Theme.typeCaption1
-                Layout.alignment: Qt.AlignHCenter
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
             }
-        }
 
-        // ── Divider ──
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.topMargin: Theme.spacing24
-            Layout.bottomMargin: Theme.spacing24
-            height: 1
-            color: Theme.hairline
-        }
-
-        // ── Author ──
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacing4
-
+            // ── Version ──
             Text {
+                Layout.fillWidth: true
+                text: "版本 " + appInfo.version + " · Rust + Qt 6"
+                color: Qt.alpha(Theme.mutedForeground, 0.8)
+                font.pixelSize: Theme.typeCaption1
+                font.family: Theme.fontSans
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            // ── Separator ──
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spacing4
+                height: 1
+                color: Theme.hairline
+            }
+
+            // ── Developer label ──
+            Text {
+                Layout.fillWidth: true
                 text: "开发者"
                 color: Theme.mutedForeground
+                font.pixelSize: Theme.typeCaption1
                 font.family: Theme.fontSans
-                font.pixelSize: Theme.typeCaption2
-                Layout.alignment: Qt.AlignHCenter
+                horizontalAlignment: Text.AlignHCenter
             }
 
+            // ── GitHub link ──
             Text {
-                id: authorLink
-                text: '<a href="https://github.com/ziyi127" style="color: ' + Theme.brand500 + '; text-decoration: none;">ziyi127</a>'
+                Layout.fillWidth: true
+                text: '<a href="https://github.com/ziyi127" style="color: ' + Theme.primary + '; text-decoration: none;">ziyi127</a>'
                 textFormat: Text.RichText
-                color: Theme.brand500
-                font.family: Theme.fontSans
+                color: Theme.primary
                 font.pixelSize: Theme.typeSubhead
                 font.weight: Theme.weightMedium
-                Layout.alignment: Qt.AlignHCenter
+                font.family: Theme.fontSans
+                horizontalAlignment: Text.AlignHCenter
                 onLinkActivated: Qt.openUrlExternally(link)
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    acceptedButtons: Qt.NoButton
-                }
             }
-        }
 
-        // ── Copyright ──
-        Text {
-            Layout.topMargin: Theme.spacing16
-            Layout.alignment: Qt.AlignHCenter
-            text: "© 2026 ziyi127"
-            color: Qt.alpha(Theme.mutedForeground, 0.6)
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.typeCaption2
-        }
+            // ── Copyright ──
+            Text {
+                Layout.fillWidth: true
+                text: "© 2026 ziyi127 · GPL-3.0"
+                color: Qt.alpha(Theme.mutedForeground, 0.72)
+                font.pixelSize: Theme.typeCaption2
+                font.family: Theme.fontSans
+                horizontalAlignment: Text.AlignHCenter
+            }
 
-        // ── License ──
-        Text {
-            text: "GPL-3.0 License"
-            font.pixelSize: Theme.typeCaption2
-            font.family: Theme.fontSans
-            color: Qt.alpha(Theme.mutedForeground, 0.6)
-            Layout.alignment: Qt.AlignHCenter
-        }
-
-        Item { Layout.fillHeight: true }
-
-        // ── Close button ──
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacing12
-
-            Item { Layout.fillWidth: true }
-
+            // ── Close button ──
             PinguoButton {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Theme.spacing8
                 text: "关闭"
                 variant: PinguoButton.Primary
                 onClicked: root.close()

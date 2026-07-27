@@ -50,6 +50,9 @@ Item {
             id: cardShadow
             anchors.fill: cardBackground
             source: cardBackground
+            // Offscreen shadows are costly when a page contains many cards.
+            // Keep the elevation cue for direct interaction only.
+            visible: root._hovered && root.enabled && root.hoverEnabled
             horizontalOffset: 0
             verticalOffset: _hovered && root.enabled ? 4 : 1
             radius: _hovered && root.enabled ? Theme.shadowRadiusHover : Theme.shadowRadiusDefault
@@ -73,7 +76,7 @@ Item {
             anchors.fill: parent
             tier: Material.Elevated
             radius: Theme.radiusLarge
-            visible: false
+            visible: true
         }
 
         // ── Content ──

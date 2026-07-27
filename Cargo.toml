@@ -1,6 +1,6 @@
 [package]
 name = "aeterna"
-version = "2.0.2"
+version = "2.0.3"
 edition = "2021"
 description = "Aeterna - Exam Schedule Player / Timer System"
 authors = ["ziyi127"]

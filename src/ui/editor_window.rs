@@ -175,8 +175,8 @@ impl EditorBackend {
                 player::ExamStatus::Completed => "已结束",
                 player::ExamStatus::Unknown => "",
             },
-            "remainingTime": if status.time_remaining_ms.is_some() {
-                player::format_duration(status.time_remaining_ms.unwrap())
+            "remainingTime": if let Some(ms) = status.time_remaining_ms {
+                player::format_duration(ms)
             } else {
                 String::new()
             },

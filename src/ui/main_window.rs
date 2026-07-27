@@ -82,16 +82,15 @@ mod ui_backend {
             self.config_json_changed();
 
             match parser::parse_exam_config(&json_str) {
-                Some(config) => {
-                    if parser::validate_exam_config(&config) {
-                        let count = config.exam_infos.len() as i32;
-                        *self._config.lock().unwrap() = Some(config);
-                        self.set_exam_count(count);
-                        self.set_config_valid(true);
-                    } else {
-                        *self._config.lock().unwrap() = None;
-                        self.set_config_valid(false);
-                    }
+                Some(config) if parser::validate_exam_config(&config) => {
+                    let count = config.exam_infos.len() as i32;
+                    *self._config.lock().unwrap() = Some(config);
+                    self.set_exam_count(count);
+                    self.set_config_valid(true);
+                }
+                Some(_) => {
+                    *self._config.lock().unwrap() = None;
+                    self.set_config_valid(false);
                 }
                 None => {
                     *self._config.lock().unwrap() = None;

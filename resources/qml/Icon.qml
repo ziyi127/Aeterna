@@ -1,7 +1,5 @@
 import QtQuick 2.15
 import "."
-// Qt6 把 QtGraphicalEffects 移到了 Qt5Compat 兼容层，使用 Qt5Compat.GraphicalEffects 替代
-import Qt5Compat.GraphicalEffects
 
 // =====================================================================
 // Aeterna Icon — SF Symbol style icon component
@@ -21,6 +19,10 @@ import Qt5Compat.GraphicalEffects
 //   Success   → Theme.success
 //   Warning   → Theme.warning
 //   Danger    → Theme.destructive
+//
+// No external dependencies — the tint is applied through
+// a simple fragment shader (ShaderEffect) so Qt5Compat is
+// never needed.
 // =====================================================================
 
 Item {
@@ -47,6 +49,20 @@ Item {
     width: effectiveSize
     height: effectiveSize
 
+    readonly property color tintColor: {
+        if (iconRoot.overrideColor !== "transparent") return iconRoot.overrideColor;
+        switch (iconRoot.tier) {
+            case 0: return Theme.foreground
+            case 1: return Theme.mutedForeground
+            case 2: return Theme.tertiaryLabel
+            case 3: return Theme.primary
+            case 4: return Theme.success
+            case 5: return Theme.warning
+            case 6: return Theme.destructive
+            default: return Theme.foreground
+        }
+    }
+
     // Backing source: the black silhouette loaded from qrc resources.
     Image {
         id: sourceImg
@@ -64,26 +80,22 @@ Item {
         anchors.fill: parent
     }
 
-    // ColorOverlay from QtGraphicalEffects re-colors the source image
-    // using its alpha as a mask — perfect for tinting black SF Symbol
-    // silhouettes into any theme color.
-    ColorOverlay {
+    // Pure-QML color overlay: multiplies source alpha by target color.
+    ShaderEffect {
         anchors.fill: sourceImg
-        source: sourceImg
-        color: {
-            if (iconRoot.overrideColor !== "transparent") return iconRoot.overrideColor;
-            switch (iconRoot.tier) {
-                case 0: return Theme.foreground
-                case 1: return Theme.mutedForeground
-                case 2: return Theme.tertiaryLabel
-                case 3: return Theme.primary
-                case 4: return Theme.success
-                case 5: return Theme.warning
-                case 6: return Theme.destructive
-                default: return Theme.foreground
-            }
-        }
-        Behavior on color {
+        property variant src: sourceImg
+        property color tint: iconRoot.tintColor
+
+        fragmentShader: "
+            varying highp vec2 qt_TexCoord0;
+            uniform sampler2D src;
+            uniform lowp vec4 tint;
+            void main() {
+                lowp vec4 tex = texture2D(src, qt_TexCoord0);
+                gl_FragColor = vec4(tint.rgb * tex.a, tex.a);
+            }"
+
+        Behavior on tint {
             ColorAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
         }
     }

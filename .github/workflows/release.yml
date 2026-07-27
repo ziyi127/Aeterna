@@ -51,7 +51,6 @@ jobs:
         run: cargo test --release
 
   verify-release-version:
-    # A tag is a release contract: vX.Y.Z must match Cargo.toml exactly.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
@@ -63,8 +62,9 @@ jobs:
           package_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
           test -n "$package_version"
           test "$tag_version" = "$package_version"
+
   # ═══════════════════════════════════════════════
-  # Linux x86_64 – portable tarball (+Qt)
+  # Linux x86_64 — stripped binary (no Qt bundle)
   # ═══════════════════════════════════════════════
   linux-x86_64:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -78,8 +78,7 @@ jobs:
           sudo apt-get install -y -qq \
             qt6-base-dev qt6-declarative-dev libqt6sql6-mysql \
             libgl1-mesa-dev libxkbcommon-dev \
-            libfontconfig1-dev librsvg2-bin \
-            patchelf file
+            libfontconfig1-dev librsvg2-bin
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -89,73 +88,21 @@ jobs:
       - name: Build (release)
         run: cargo build --release --target x86_64-unknown-linux-gnu
 
-      - name: Bundle Qt libs
+      - name: Strip & rename
         run: |
-          BINARY=target/x86_64-unknown-linux-gnu/release/aeterna
-          mkdir -p bundle/usr/bin bundle/usr/lib
-
-          cp "$BINARY" bundle/usr/bin/
-
-          # Collect only the Qt shared libraries we actually need
-          ldd "$BINARY" \
-            | awk '/=> \//{print $3}' \
-            | grep -E 'libQt|libicu|libxkbcommon|libfontconfig|libfreetype' \
-            | while read lib; do
-                [ -n "$lib" ] && cp -n "$lib" bundle/usr/lib/ 2>/dev/null || true
-              done
-
-          patchelf --set-rpath '$ORIGIN/../lib' bundle/usr/bin/aeterna
-
-          # Platform plug-in is required for GUI
-          mkdir -p bundle/usr/lib/qt6/plugins/platforms
-          find /usr/lib /usr/lib64 -name 'libqwayland*' -o -name 'libqxcb*' -o -name 'libqlinuxfb*' -o -name 'libqoffscreen*' -o -name 'libqminimal*' 2>/dev/null | head -10 | while read p; do
-            cp -n "$p" bundle/usr/lib/qt6/plugins/platforms/ 2>/dev/null || true
-          done
-
-          mkdir -p bundle/usr/lib/qt6/qml/QtQuick/Controls
-          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQuick/Controls" -type d 2>/dev/null | head -1 | while read d; do
-            mkdir -p bundle/usr/lib/qt6/qml/QtQuick
-            cp -r "$d" bundle/usr/lib/qt6/qml/QtQuick/
-          done
-
-          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQuick/Templates" -type d 2>/dev/null | head -1 | while read d; do
-            cp -r "$d" bundle/usr/lib/qt6/qml/QtQuick/
-          done
-
-          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQuick/Layouts" -type d 2>/dev/null | head -1 | while read d; do
-            cp -r "$d" bundle/usr/lib/qt6/qml/QtQuick/
-          done
-
-          find /usr/lib /usr/lib64 -path "*/qt6/qml/QtQml" -type d 2>/dev/null | head -1 | while read d; do
-            cp -r "$d" bundle/usr/lib/qt6/qml/
-          done
-
-          find /usr/lib /usr/lib64 -path "*/qt6/qml/Qt" -maxdepth 0 -type d 2>/dev/null | head -1 | while read d; do
-            cp -r "$d" bundle/usr/lib/qt6/qml/Qt 2>/dev/null || true
-          done
-
-          # qt.conf
-          cat > bundle/usr/bin/qt.conf << 'EOF'
-          [Paths]
-          Plugins = ../lib/qt6/plugins
-          Imports = ../lib/qt6/qml
-          Qml2Imports = ../lib/qt6/qml
-          EOF
-
-      - name: Package
-        run: |
-          cd bundle && tar czf ../aeterna-x86_64-linux.tar.gz . && cd ..
+          strip target/x86_64-unknown-linux-gnu/release/aeterna
           cp target/x86_64-unknown-linux-gnu/release/aeterna aeterna-x86_64-linux
+          sha256sum aeterna-x86_64-linux > aeterna-x86_64-linux.sha256
 
       - uses: actions/upload-artifact@v6
         with:
           name: aeterna-x86_64-linux
           path: |
-            aeterna-x86_64-linux.tar.gz
             aeterna-x86_64-linux
+            aeterna-x86_64-linux.sha256
 
   # ═══════════════════════════════════════════════
-  # Windows x86_64 – windeployqt → zip
+  # Windows x86_64 — stripped binary (no Qt bundle)
   # ═══════════════════════════════════════════════
   windows-x86_64:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -167,8 +114,8 @@ jobs:
         run: |
           pip install aqtinstall
           aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O D:\a\Qt
-          "Qt6_DIR=D:\a\Qt\6.8.3\msvc2022_64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "D:\a\Qt\6.8.3\msvc2022_64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          echo "Qt6_DIR=D:\a\Qt\6.8.3\msvc2022_64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "D:\a\Qt\6.8.3\msvc2022_64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -181,39 +128,22 @@ jobs:
         env:
           Qt6_DIR: D:\a\Qt\6.8.3\msvc2022_64
 
-      - name: Bundle with windeployqt
+      - name: Strip & rename
         run: |
-          windeployqt.exe --qmldir resources/qml --no-compiler-runtime --no-translations target\x86_64-pc-windows-msvc\release\aeterna.exe
-          # Strip PDB files — windeployqt may copy them but we don't ship debug symbols.
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue target\x86_64-pc-windows-msvc\release\*.pdb
-          # Remove unnecessary Qt plugins (bearer, sensord, qmltooling, etc.)
-          $pluginDir = "target\x86_64-pc-windows-msvc\release"
-          @("bearer", "sensord", "position", "qmltooling", "gamepads", "multimedia", "texttospeech", "scenegraph", "geometryloaders", "renderplugins", "virtualkeyboard") | ForEach-Object {
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$pluginDir\$_"
-          }
-        shell: pwsh
-        env:
-          Qt6_DIR: D:\a\Qt\6.8.3\msvc2022_64
-
-      - name: Package (zip)
-        run: |
-          Compress-Archive -Path target\x86_64-pc-windows-msvc\release\* -DestinationPath aeterna-x86_64-windows.zip
+          strip target\x86_64-pc-windows-msvc\release\aeterna.exe
+          Move-Item target\x86_64-pc-windows-msvc\release\aeterna.exe aeterna.exe
+          Get-FileHash -Algorithm SHA256 aeterna.exe | ForEach-Object { "$($_.Hash.ToLower())  aeterna.exe" } | Out-File aeterna-x86_64-windows.sha256 -Encoding ascii
         shell: pwsh
 
       - uses: actions/upload-artifact@v6
         with:
           name: aeterna-x86_64-windows
-          path: aeterna-x86_64-windows.zip
+          path: |
+            aeterna.exe
+            aeterna-x86_64-windows.sha256
 
   # ═══════════════════════════════════════════════
-  # macOS Intel (x86_64) — commented out (no macos-13 runner available)
-  # ═══════════════════════════════════════════════
-  # macos-x86_64:
-  #   runs-on: macos-13
-  #   ...
-
-  # ═══════════════════════════════════════════════
-  # macOS Apple Silicon (arm64)
+  # macOS Apple Silicon (arm64) — stripped binary
   # ═══════════════════════════════════════════════
   macos-arm64:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -236,27 +166,18 @@ jobs:
       - name: Build (release)
         run: cargo build --release --target aarch64-apple-darwin
 
-      - name: Bundle with macdeployqt
+      - name: Strip & rename
         run: |
-          mkdir -p aeterna.app/Contents/MacOS
-          cp target/aarch64-apple-darwin/release/aeterna aeterna.app/Contents/MacOS/
-          $(brew --prefix qt@6)/bin/macdeployqt aeterna.app -verbose=1 -qmldir=resources/qml
-
-      - name: Package
-        run: |
-          # Remove debug symbols from the bundled app
-          find aeterna.app -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
-          find aeterna.app -name 'Qt*_debug*' -delete 2>/dev/null || true
-          zip -r aeterna-arm64-macos.zip aeterna.app
-          # Also ship the bare binary for users who want it
+          strip target/aarch64-apple-darwin/release/aeterna
           cp target/aarch64-apple-darwin/release/aeterna aeterna-arm64-macos
+          shasum -a 256 aeterna-arm64-macos > aeterna-arm64-macos.sha256
 
       - uses: actions/upload-artifact@v6
         with:
           name: aeterna-arm64-macos
           path: |
-            aeterna-arm64-macos.zip
             aeterna-arm64-macos
+            aeterna-arm64-macos.sha256
 
   # ═══════════════════════════════════════════════
   # Create GitHub Release (only on tag push)
@@ -286,19 +207,15 @@ jobs:
 
           | Platform | File |
           |----------|------|
-          | Linux x86_64 (portable) | `aeterna-x86_64-linux.tar.gz` |
-          | Linux x86_64 (standalone) | `aeterna-x86_64-linux` |
-          | Windows x86_64 | `aeterna-x86_64-windows.zip` |
-          | macOS Apple Silicon | `aeterna-arm64-macos.zip` |
+          | Linux x86_64 | `aeterna-x86_64-linux` |
+          | Windows x86_64 | `aeterna.exe` |
+          | macOS Apple Silicon | `aeterna-arm64-macos` |
 
-          ---
-
-          **Linux**: Extract `aeterna-x86_64-linux.tar.gz` — includes Qt runtime.
-          **Windows**: Extract `aeterna-x86_64-windows.zip`, run `aeterna.exe`.
-          **macOS**: Extract `*-macos.zip`, open `aeterna.app`.
+          > 本版本仅提供可执行文件，运行时需安装 Qt 6.5+。
+          > 运行方式：`./aeterna` (Linux/macOS)、双击 `aeterna.exe` (Windows)。
           EOF
 
-          find artifacts -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          find artifacts -type f -name '*.sha256' -delete
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -308,6 +225,4 @@ jobs:
           body_path: release-notes.md
           draft: false
           prerelease: false
-          files: |
-            artifacts/**/*
-            SHA256SUMS.txt
+          files: artifacts/**/*

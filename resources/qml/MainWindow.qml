@@ -209,7 +209,8 @@ ApplicationWindow {
             Layout.fillHeight: true
             tier: Material.Elevated
             radius: 0 // edge-to-edge sidebar
-            bordered: false
+            bordered: true
+            liquidGlass: true
 
             // 1px hairline on right edge of sidebar
             Rectangle {

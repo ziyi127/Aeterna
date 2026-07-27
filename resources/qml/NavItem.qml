@@ -23,6 +23,7 @@ Item {
     height: Theme.minHitTarget
     width: parent ? parent.width : implicitWidth
     implicitWidth: rowLayout.implicitWidth + Theme.marginStandard * 2
+    activeFocusOnTab: true
 
     Rectangle {
         id: background
@@ -67,6 +68,16 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: root.clicked()
+        onClicked: {
+            root.forceActiveFocus()
+            root.clicked()
+        }
+    }
+
+    Keys.onPressed: {
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+            root.clicked()
+            event.accepted = true
+        }
     }
 }

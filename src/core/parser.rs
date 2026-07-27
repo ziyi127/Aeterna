@@ -19,7 +19,11 @@ pub fn parse_exam_config(json: &str) -> Option<ExamConfig> {
     match serde_json::from_str::<serde_json::Value>(json) {
         Ok(data) => {
             data.get("examInfos")?;
-            serde_json::from_value::<ExamConfig>(data).ok()
+            let mut config = serde_json::from_value::<ExamConfig>(data).ok()?;
+            // 解析入口统一填充时间缓存。排序、重叠检测和播放器调度均依赖
+            // 毫秒时间戳；若遗漏这一步，未缓存的记录都会被当作时间戳 0。
+            config.cache_timestamps();
+            Some(config)
         }
         Err(_) => None,
     }
@@ -352,6 +356,8 @@ mod tests {
         let config = config.unwrap();
         assert_eq!(config.exam_name, "期末考试");
         assert_eq!(config.exam_infos.len(), 1);
+        assert!(config.exam_infos[0].start_ts > 0);
+        assert!(config.exam_infos[0].end_ts > config.exam_infos[0].start_ts);
     }
 
     #[test]

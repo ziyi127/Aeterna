@@ -2,7 +2,10 @@ name: Build and Release
 
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -46,10 +49,25 @@ jobs:
 
       - name: Test
         run: cargo test --release
+
+  verify-release-version:
+    # A tag is a release contract: vX.Y.Z must match Cargo.toml exactly.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify tag and package version
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          test -n "$package_version"
+          test "$tag_version" = "$package_version"
   # ═══════════════════════════════════════════════
   # Linux x86_64 – portable tarball (+Qt)
   # ═══════════════════════════════════════════════
   linux-x86_64:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -126,6 +144,7 @@ jobs:
   # Windows x86_64 – windeployqt → zip
   # ═══════════════════════════════════════════════
   windows-x86_64:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -176,6 +195,7 @@ jobs:
   # macOS Apple Silicon (arm64)
   # ═══════════════════════════════════════════════
   macos-arm64:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -215,6 +235,8 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/')
     needs:
+      - quality
+      - verify-release-version
       - linux-x86_64
       - windows-x86_64
       - macos-arm64
@@ -247,6 +269,8 @@ jobs:
           **macOS**: Extract `*-macos.zip`, open `aeterna.app`.
           EOF
 
+          find artifacts -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -257,3 +281,4 @@ jobs:
           prerelease: false
           files: |
             artifacts/**/*
+            SHA256SUMS.txt

@@ -35,6 +35,9 @@ Item {
     property int tier: Material.Elevated
     property real radius: Theme.radiusLarge
     property bool bordered: true
+    // Use only for navigation and transient controls. Content cards should
+    // retain standard materials for hierarchy and sustained readability.
+    property bool liquidGlass: false
 
     // Aliases for parent layout convenience
     property alias color: rect.color
@@ -46,6 +49,7 @@ Item {
         radius: root.radius
         border.width: root.bordered ? 1 : 0
         color: {
+            if (root.liquidGlass) return Theme.glassRegular
             switch (root.tier) {
                 case 0: return Theme.materialBase
                 case 1: return Theme.materialElevated
@@ -54,10 +58,23 @@ Item {
                 default: return Theme.materialBase
             }
         }
-        border.color: Theme.hairline
+        border.color: root.liquidGlass ? Theme.glassBorder : Theme.hairline
+        opacity: root.liquidGlass ? Theme.glassOpacity : 1.0
 
         Behavior on color {
             ColorAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
+        }
+
+        // A restrained highlight gives the navigation layer a glass edge
+        // without introducing expensive blur effects across the content tree.
+        Rectangle {
+            visible: root.liquidGlass && !Theme.highContrast
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            radius: root.radius
+            color: Theme.glassHighlight
         }
     }
 }

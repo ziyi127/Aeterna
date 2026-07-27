@@ -579,7 +579,7 @@ impl PlayerBackend {
     /// 从 JSON 字符串加载考试配置。对应 TS 的 `updateConfig()`。
     fn loadConfig(&self, json: QString) -> bool {
         let json_str = json.to_string();
-        let config: ExamConfig = match serde_json::from_str::<ExamConfig>(&json_str) {
+        let mut config: ExamConfig = match serde_json::from_str::<ExamConfig>(&json_str) {
             Ok(c) => c,
             Err(e) => {
                 *self._error.lock().unwrap() = format!("配置解析失败: {}", e);
@@ -589,6 +589,9 @@ impl PlayerBackend {
                 return false;
             }
         };
+
+        // QML 与文件入口都在这里汇合，确保后续重叠检测和调度使用缓存时间戳。
+        config.cache_timestamps();
 
         if !parser::validate_exam_config(&config) {
             *self._error.lock().unwrap() = "配置验证失败".to_string();

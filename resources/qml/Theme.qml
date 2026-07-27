@@ -297,7 +297,7 @@ QtObject {
     readonly property int weightBold:     Font.Bold
 
     // ═══════════════════════════════════════════════════════════════
-    // MATERIAL — opaque semantic surface tiers (Pinguo)
+    // MATERIAL — standard content surfaces + restrained Liquid Glass controls
     // ═══════════════════════════════════════════════════════════════
     //   base     — primary window surface (background)
     //   elevated — raised card / panel (card)
@@ -307,6 +307,15 @@ QtObject {
     readonly property color materialElevated: card
     readonly property color materialOverlay:  popover
     readonly property color materialVibrant:  secondary
+
+    // Liquid Glass is reserved for navigation and transient controls.  It is
+    // deliberately not used for content cards, preserving a clear hierarchy.
+    // High-contrast mode provides the same readable fallback as Reduce
+    // Transparency on Apple platforms.
+    readonly property color glassRegular: darkMode ? "#d91c1c1e" : "#e8f2f2f7"
+    readonly property color glassBorder:  darkMode ? "#40ffffff" : "#55ffffff"
+    readonly property color glassHighlight: darkMode ? "#12ffffff" : "#80ffffff"
+    readonly property real glassOpacity: highContrast ? 1.0 : 0.92
 
     // Hairline border: structural 1px edge.
     // Pinguo spec: "1px borders to define edges before reaching for shadow."

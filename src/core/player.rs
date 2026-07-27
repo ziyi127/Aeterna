@@ -111,7 +111,13 @@ impl PlayerCore {
     /// 创建新的 PlayerCore 实例。
     ///
     /// 对应 TS 的构造函数。
-    pub fn new(config: Option<ExamConfig>, time_fn: Box<dyn Fn() -> i64 + Send + 'static>) -> Self {
+    pub fn new(
+        mut config: Option<ExamConfig>,
+        time_fn: Box<dyn Fn() -> i64 + Send + 'static>,
+    ) -> Self {
+        if let Some(config) = config.as_mut() {
+            config.cache_timestamps();
+        }
         let current_time = time_fn();
         let inner = PlayerInner {
             state: PlayerState::default(),
@@ -223,10 +229,9 @@ impl PlayerCore {
                         true
                     });
 
-                    // 更新当前考试（每30秒检查一次，模拟 TS 中的 watch 行为）
-                    if now % 30000 < 1000 {
-                        Self::update_current_exam_inner(&mut inner);
-                    }
+                    // 与界面秒级时钟保持一致，避免开始/结束后最多 30 秒
+                    // 才切换当前考试状态。考试数量通常很小，线性扫描成本可忽略。
+                    Self::update_current_exam_inner(&mut inner);
                 }
 
                 thread::sleep(Duration::from_secs(1));
@@ -260,8 +265,10 @@ impl PlayerCore {
     ///
     /// 对应 TS 的 `updateConfig()` 方法。
     /// 返回 false 表示配置验证失败或时间重叠。
-    pub fn update_config(&self, new_config: ExamConfig) -> bool {
+    pub fn update_config(&self, mut new_config: ExamConfig) -> bool {
         let mut inner = self.inner.lock().unwrap();
+
+        new_config.cache_timestamps();
 
         // 验证配置
         if !validate_exam_config(&new_config) {

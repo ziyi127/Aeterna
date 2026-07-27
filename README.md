@@ -4,7 +4,7 @@
 
 # Aeterna
 
-**考试日程播放 / 计时系统 · Rust + Qt6 原生构建**
+**可靠、清晰的考试日程播放与考场计时系统**
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85%2B-orange)](https://www.rust-lang.org)
@@ -13,120 +13,97 @@
 
 </div>
 
----
+## Aeterna 能做什么
 
-## ✨ 特性
+- **按真实时间自动推进**：在开始、结束和结束前提醒时自动切换状态，减少人工计时压力。
+- **面向大屏的播放器**：独立播放窗口，清楚展示当前科目、倒计时、考场号与公告。
+- **可视化日程编辑**：创建、排序和校验多场考试；开始时间、结束时间、提醒时间和材料清单一目了然。
+- **多屏与远程能力**：可发现局域网设备进行投屏，并提供 HTTP API 供集成控制。
+- **更可靠的时间**：支持 NTP 校时，适合对时间准确性有要求的考场。
+- **适配你的环境**：Windows、macOS 和 Linux 均可使用，支持浅色、深色和高对比度外观。
 
-- **⏱️ 考试日程状态机** — 基于真实时间的考试播放引擎，自动推进开始/结束/提醒回调
-- **📺 多窗口界面** — 独立的播放器窗口与编辑器窗口，适合考场数字标牌场景
-- **🌐 局域网投屏** — 内置 mDNS 设备发现 + HTTP 投屏协议，多屏同步显示
-- **🔌 插件系统** — 可扩展的插件架构，支持菜单/页面/服务注册
-- **🖥️ 跨平台原生** — Qt6 原生界面，一致的体验在 Windows / macOS / Linux
-- **🎨 精致 UI** — 支持明暗主题自动切换
-- **📡 HTTP API** — 内置 REST API 服务（健康检查、时间查询、配置管理、WebSocket），支持远程控制
-- **⏰ NTP 校时** — 集成 NTP 时间同步服务，确保考场时钟准确
-- **🪟 Windows UIAccess** — 支持 UIAccess 权限提升以支持全局热键
+## 使用前准备
 
-## 🖼️ 截图
+1. 从 [Releases](https://github.com/ziyi127/Aeterna/releases) 下载与你的系统对应的文件。
+2. 解压后运行 Aeterna。Linux 便携包已包含 Qt 运行时；Windows 运行 `aeterna.exe`；macOS 打开 `aeterna.app`。
+3. 在首页选择“新建/编辑日程”，填写考试信息并保存为 JSON。
+4. 载入日程后打开播放器。开始前请核对系统时间，必要时在设置中进行 NTP 校时。
 
-> 暂无
+> 请在正式考试开始前，用一份测试日程完整演练一次提醒、全屏显示和退出密码流程。
 
-## 🚀 快速开始
+## 日程文件格式
 
-### 前置依赖
+日程文件是 UTF-8 编码的 JSON。时间使用 `YYYY-MM-DD HH:MM:SS`，`alertTime` 表示结束前几分钟提醒（`0` 表示关闭提醒）。
+
+```json
+{
+  "examName": "2026 年春季期末考试",
+  "message": "请遵守考场纪律，听从监考安排。",
+  "examInfos": [
+    {
+      "name": "语文",
+      "start": "2026-07-01 08:30:00",
+      "end": "2026-07-01 10:30:00",
+      "alertTime": 10,
+      "materials": [
+        { "name": "答题卡", "quantity": 1, "unit": "张" }
+      ]
+    }
+  ]
+}
+```
+
+保存前，Aeterna 会提示必填项、无效时间和可能重叠的场次。存在时间重叠的日程不能进入播放器。
+
+## 从源码构建
+
+### 开发依赖
 
 | 平台 | 依赖 |
 |------|------|
 | **Linux** | `qt6-base-dev`, `qt6-declarative-dev`, `libgl1-mesa-dev`, `libxkbcommon-dev`, `librsvg2-bin` |
 | **macOS** | `brew install qt@6` |
-| **Windows** | [Qt 6.7+](https://www.qt.io/download-qt-installer) (勾选 MSVC 2022 64-bit + Qt Declarative) |
-
-### 从源码构建
+| **Windows** | [Qt 6.7+](https://www.qt.io/download-qt-installer)（勾选 MSVC 2022 64-bit 与 Qt Declarative） |
 
 ```bash
-# 克隆仓库
 git clone https://github.com/ziyi127/Aeterna.git
 cd Aeterna
-
-# 构建（自动下载依赖）
 cargo build --release
-
-# 运行
 ./target/release/aeterna
 ```
 
-> 首次构建需要下载 Rust crate 依赖，耗时约 5-15 分钟（取决于网络环境）。
+首次构建会下载 Rust 依赖；请使用稳定版 Rust 1.85 或更高版本。
 
-### 下载预编译版本
+## 常见问题
 
-前往 [Releases](https://github.com/ziyi127/Aeterna/releases) 下载对应平台的压缩包：
+**播放器提示日程无效？** 请检查每场考试的名称、开始/结束时间是否完整，结束是否晚于开始，以及场次是否重叠。
 
-| 平台 | 架构 | 后缀 |
-|------|------|------|
-| Linux | x86_64 | `.tar.gz` |
-| Windows | x86_64 | `.zip` |
-| macOS | Apple Silicon | `.tar.gz` |
+**时间不准确？** 检查操作系统时间，并在设置中启用或手动执行 NTP 校时。
 
-> 注意：运行时需确保系统已安装 Qt6 运行时库。
+**无法启动或界面缺少组件？** 请优先下载 Release 中的完整压缩包；从源码运行则需要安装上表列出的 Qt 6 开发依赖。
 
-## 🏗️ 项目结构
+## 开发者信息
+
+项目采用 Rust + Qt 6 构建。目录说明：
 
 ```
-Aeterna/
-├── src/
-│   ├── main.rs              # 入口 + 服务初始化
-│   ├── window_manager.rs    # 窗口管理 + 单实例锁 + Deep Link
-│   ├── ui_access.rs         # Windows UIAccess 权限
-│   ├── core/                # 核心数据模型与考试播放引擎
-│   │   ├── types.rs         # ExamConfig / ExamInfo / ExamMaterial
-│   │   ├── parser.rs        # JSON 解析与校验
-│   │   ├── player.rs        # 考试状态机（按真实时间推进）
-│   │   └── utils.rs         # 时间解析工具
-│   ├── ui/                  # QML 界面后台逻辑
-│   │   ├── main_window.rs   # 主窗口 + QML 类型注册
-│   │   ├── player_window.rs # 播放器窗口（NTP + 考试状态桥接）
-│   │   ├── editor_window.rs # 编辑器窗口（JSON 编辑 + 校验）
-│   │   ├── settings_window.rs # 设置窗口
-│   │   └── ...
-│   ├── services/            # HTTP API、NTP、投屏服务
-│   └── plugins/             # 插件系统
-├── resources/
-│   ├── qml/                 # Qt QML 界面文件
-│   ├── icons/               # 图标资源
-│   └── resources.qrc        # Qt 资源描述
-├── build.rs                 # 构建脚本 (QRC → qrc! 宏)
-└── Cargo.toml               # Rust 项目配置
+src/core/       考试数据、校验与播放状态机
+src/ui/         QML 后端与窗口逻辑
+src/services/   NTP、HTTP API 与投屏服务
+resources/qml/  界面与设计系统
 ```
 
-## 📜 版本历史
+## 版本与发布
 
-| 版本 | 状态 | 说明 |
-|------|------|------|
-| **v2.0** | ✅ Beta | Rust + Qt6 重写，全新架构 |
+当前正式版本为 **v2.0.0**。推送形如 `v2.0.0` 的标签会自动执行质量检查、构建 Linux/Windows/macOS 安装包、生成 SHA-256 校验和，并创建 GitHub Release。标签版本必须与 `Cargo.toml` 一致。
 
-> v2.0 使用 Rust 和 Qt6 完全重写，拥有更好的性能和更精美的界面。
+## 贡献
 
-## 🤝 贡献
+- 发现问题请提交 [Issue](https://github.com/ziyi127/Aeterna/issues)。
+- 欢迎通过 Pull Request 贡献改进。
 
-本项目由 **ziyi127** 独立开发维护。
-
-- 🐛 发现 Bug？请提交 [Issue](https://github.com/ziyi127/Aeterna/issues)
-- 💡 有想法？欢迎提交 Pull Request
-- ⭐ 喜欢这个项目？给个 Star 支持一下！
-
-## 📄 许可证
+## 许可证
 
 [GNU General Public License v3.0](LICENSE)
 
-> [!IMPORTANT]
-> Apache2.0许可证已停用，现在使用新的许可证方案，请查阅最新版许可证！(๑•̀ㅂ•́)و✧
-
 版权所有 © 2026 [ziyi127](https://github.com/ziyi127)
-
----
-
-<div align="center">
-  <sub>Built with ❤️ by <a href="https://github.com/ziyi127">ziyi127</a></sub>
-  <br>
-  <sub>基于 Rust + Qt6 · 跨平台原生桌面应用</sub>
-</div>

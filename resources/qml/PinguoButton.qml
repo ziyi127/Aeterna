@@ -42,6 +42,7 @@ Item {
     implicitWidth: Math.max(buttonHeight, rowLayout.implicitWidth + hPadding * 2)
     implicitHeight: buttonHeight
     opacity: root.enabled ? 1.0 : 0.42
+    activeFocusOnTab: true
 
     Rectangle {
         id: background
@@ -121,7 +122,10 @@ Item {
         anchors.fill: parent
         hoverEnabled: root.enabled
         cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-        onClicked: if (root.enabled) root.clicked()
+        onClicked: {
+            root.forceActiveFocus()
+            if (root.enabled) root.clicked()
+        }
     }
 
     Keys.onPressed: {

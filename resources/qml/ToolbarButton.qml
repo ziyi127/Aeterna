@@ -27,6 +27,7 @@ Item {
     property string label: ""
     property bool checked: false
     property bool danger: false
+    activeFocusOnTab: true
 
     signal clicked()
     signal pressAndHold()
@@ -59,6 +60,16 @@ Item {
         }
     }
 
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: -2
+        radius: Theme.radiusMedium + 2
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.ring
+        visible: root.activeFocus
+    }
+
     ColumnLayout {
         anchors.centerIn: parent
         spacing: Theme.spacing4
@@ -88,7 +99,17 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: root.clicked()
+        onClicked: {
+            root.forceActiveFocus()
+            root.clicked()
+        }
         onPressAndHold: root.pressAndHold()
+    }
+
+    Keys.onPressed: {
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+            root.clicked()
+            event.accepted = true
+        }
     }
 }

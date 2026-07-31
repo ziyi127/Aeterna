@@ -5,252 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Aeterna · 考试现场的时间中枢</title>
   <meta name="description" content="Aeterna —— 可靠、清晰的考试日程播放与考场计时系统。基于 Rust + Qt 6，跨 Windows、macOS 与 Linux。" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='5' width='22' height='22' rx='7' fill='none' stroke='%230b7dff' stroke-width='2.5'/%3E%3Ccircle cx='21' cy='21' r='4' fill='%230b7dff'/%3E%3C/svg%3E" />
-  <style>
-    :root {
-      --glass-bg: rgba(255, 255, 255, 0.55);
-      --glass-bg-strong: rgba(255, 255, 255, 0.78);
-      --glass-border: rgba(255, 255, 255, 0.6);
-      --glass-shadow: 0 12px 40px rgba(20, 40, 90, 0.14);
-      --ink: #0d1b2a;
-      --muted: #51657d;
-      --line: rgba(13, 27, 42, 0.08);
-      --brand: #0b6dff;
-      --brand-2: #7a3dff;
-      --brand-3: #11c8a8;
-      --radius: 28px;
-      --radius-sm: 18px;
-      --maxw: 1120px;
-      --font: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --glass-bg: rgba(255, 255, 255, 0.09);
-        --glass-bg-strong: rgba(255, 255, 255, 0.14);
-        --glass-border: rgba(255, 255, 255, 0.18);
-        --glass-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-        --ink: #f1f5fb;
-        --muted: #aeb9c9;
-        --line: rgba(255, 255, 255, 0.12);
-      }
-    }
-    * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      font-family: var(--font);
-      color: var(--ink);
-      line-height: 1.6;
-      min-height: 100vh;
-      overflow-x: hidden;
-      background:
-        radial-gradient(60vw 60vw at 12% 8%, rgba(11, 109, 255, 0.55), transparent 60%),
-        radial-gradient(55vw 55vw at 88% 12%, rgba(122, 61, 255, 0.0), transparent 60%),
-        radial-gradient(60vw 60vw at 85% 90%, rgba(122, 61, 255, 0.5), transparent 60%),
-        radial-gradient(55vw 55vw at 10% 95%, rgba(17, 200, 168, 0.5), transparent 60%);
-      background-color: #eaf0ff;
-      background-attachment: fixed;
-    }
-    @media (prefers-color-scheme: dark) {
-      body { background-color: #060b16; }
-    }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      z-index: -1;
-      pointer-events: none;
-      background:
-        radial-gradient(40vw 40vw at 20% 20%, rgba(11, 109, 255, 0.35), transparent 55%),
-        radial-gradient(38vw 38vw at 85% 25%, rgba(122, 61, 255, 0.32), transparent 55%),
-        radial-gradient(42vw 42vw at 75% 85%, rgba(17, 200, 168, 0.3), transparent 55%);
-      filter: blur(60px);
-      animation: drift 18s ease-in-out infinite alternate;
-    }
-    @keyframes drift {
-      0%   { transform: translate3d(0, 0, 0) scale(1); }
-      100% { transform: translate3d(-3%, 2%, 0) scale(1.08); }
-    }
-
-    /* ---------- Navbar ---------- */
-    .nav {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      backdrop-filter: blur(26px) saturate(180%);
-      -webkit-backdrop-filter: blur(26px) saturate(180%);
-      background: var(--glass-bg);
-      border-bottom: 1px solid var(--glass-border);
-    }
-    .nav-inner {
-      width: min(var(--maxw), 92vw);
-      margin: 0 auto;
-      padding: 14px 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 18px;
-    }
-    .brand { display: inline-flex; align-items: center; gap: 11px; text-decoration: none; color: var(--ink); }
-    .brand-mark {
-      width: 34px; height: 34px; border-radius: 12px;
-      border: 2px solid var(--brand);
-      background: linear-gradient(135deg, rgba(11,109,255,0.16), rgba(122,61,255,0.08));
-      position: relative; flex: 0 0 auto;
-    }
-    .brand-mark::after {
-      content: ""; position: absolute; right: 5px; top: 5px;
-      width: 9px; height: 9px; border-radius: 50%;
-      background: linear-gradient(135deg, var(--brand), var(--brand-2));
-    }
-    .brand-name { font-size: 19px; font-weight: 800; letter-spacing: 0.01em; }
-    .nav-links { display: flex; gap: 6px; flex-wrap: wrap; }
-    .nav-links a {
-      color: var(--muted); text-decoration: none; font-size: 14.5px; font-weight: 500;
-      padding: 9px 14px; border-radius: 999px; border: 1px solid transparent;
-      transition: .25s;
-    }
-    .nav-links a:hover { color: var(--ink); background: var(--glass-bg-strong); border-color: var(--glass-border); }
-    .nav-cta {
-      text-decoration: none; font-weight: 700; font-size: 14px; color: #fff;
-      padding: 11px 20px; border-radius: 999px;
-      background: linear-gradient(135deg, var(--brand), var(--brand-2));
-      box-shadow: 0 8px 24px rgba(11, 109, 255, 0.4);
-      transition: .25s; white-space: nowrap;
-    }
-    .nav-cta:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(11, 109, 255, 0.5); }
-    .nav-toggle {
-      display: none; width: 42px; height: 42px; border-radius: 12px; cursor: pointer;
-      background: var(--glass-bg); border: 1px solid var(--glass-border);
-      align-items: center; justify-content: center;
-    }
-    .nav-toggle span, .nav-toggle span::before, .nav-toggle span::after {
-      content: ""; position: absolute; width: 20px; height: 2px; border-radius: 2px; background: var(--ink);
-    }
-    .nav-toggle span::before { transform: translateY(-6px); }
-    .nav-toggle span::after { transform: translateY(6px); }
-
-    /* ---------- Layout ---------- */
-    .wrap { width: min(var(--maxw), 92vw); margin: 0 auto; }
-    section { padding: 80px 0; }
-
-    /* ---------- Glass card ---------- */
-    .glass {
-      border-radius: var(--radius);
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      box-shadow: var(--glass-shadow);
-      backdrop-filter: blur(30px) saturate(180%);
-      -webkit-backdrop-filter: blur(30px) saturate(180%);
-      position: relative;
-      overflow: hidden;
-    }
-    .glass::after {
-      content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-      background: linear-gradient(135deg, rgba(255,255,255,0.25), transparent 45%);
-      mix-blend-mode: overlay;
-    }
-
-    /* ---------- Hero ---------- */
-    .hero { padding-top: 64px; }
-    .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 28px; align-items: stretch; }
-    .eyebrow {
-      display: inline-flex; align-items: center; gap: 9px; padding: 8px 15px; border-radius: 999px;
-      background: rgba(11, 109, 255, 0.12); color: var(--brand); font-size: 13px; font-weight: 700; letter-spacing: 0.03em;
-    }
-    .eyebrow .dot { width: 8px; height: 8px; border-radius: 50%; background: linear-gradient(135deg, var(--brand), var(--brand-2)); }
-    h1 {
-      margin: 20px 0 0; font-size: clamp(40px, 6vw, 74px); line-height: 1.02; letter-spacing: -0.02em; font-weight: 850;
-    }
-    .hero-sub { margin-top: 18px; color: var(--muted); font-size: clamp(15px, 1.6vw, 18px); max-width: 30em; }
-    .cta-row { margin-top: 26px; display: flex; gap: 12px; flex-wrap: wrap; }
-    .btn {
-      text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      min-height: 48px; padding: 12px 22px; border-radius: 16px; font-weight: 700; font-size: 15px;
-      border: 1px solid var(--line); transition: .25s;
-    }
-    .btn-primary { color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-2)); border-color: transparent; box-shadow: 0 10px 28px rgba(11,109,255,0.4); }
-    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(11,109,255,0.5); }
-    .btn-ghost { color: var(--ink); background: var(--glass-bg-strong); }
-    .btn-ghost:hover { transform: translateY(-2px); border-color: var(--brand); }
-
-    /* Device mockup */
-    .device {
-      padding: 26px; display: flex; flex-direction: column; gap: 16px; min-height: 100%;
-    }
-    .device-screen {
-      border-radius: var(--radius-sm); padding: 22px;
-      background: linear-gradient(160deg, rgba(255,255,255,0.5), rgba(255,255,255,0.2));
-      border: 1px solid var(--glass-border);
-    }
-    .device-eyebrow { font-size: 12px; letter-spacing: 0.12em; color: var(--muted); text-transform: uppercase; }
-    .device-title { font-size: 22px; font-weight: 800; margin: 6px 0 14px; }
-    .device-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
-    .device-row:first-of-type { border-top: none; }
-    .device-row .k { color: var(--muted); font-size: 13.5px; }
-    .device-row .v { font-weight: 700; font-size: 14px; }
-    .cd-big { font-size: clamp(40px, 7vw, 64px); font-weight: 850; letter-spacing: -0.02em; line-height: 1; background: linear-gradient(135deg, var(--brand), var(--brand-3)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .pill { display: inline-block; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; background: rgba(17,200,168,0.16); color: #0a9e86; }
-
-    /* ---------- Section heading ---------- */
-    .sec-head { text-align: center; max-width: 40em; margin: 0 auto 48px; }
-    .sec-head h2 { font-size: clamp(28px, 4vw, 46px); margin: 0; font-weight: 820; letter-spacing: -0.01em; }
-    .sec-head p { color: var(--muted); margin: 14px 0 0; font-size: 16px; }
-
-    /* ---------- Features ---------- */
-    .feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
-    .feat { padding: 28px; }
-    .feat .ico {
-      width: 52px; height: 52px; border-radius: 16px; display: flex; align-items: center; justify-content: center;
-      background: linear-gradient(135deg, rgba(11,109,255,0.16), rgba(122,61,255,0.1)); border: 1px solid var(--glass-border); margin-bottom: 18px;
-    }
-    .feat .ico svg { width: 26px; height: 26px; }
-    .feat h3 { margin: 0 0 8px; font-size: 19px; font-weight: 750; }
-    .feat p { margin: 0; color: var(--muted); font-size: 14.5px; }
-
-    /* ---------- Steps ---------- */
-    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
-    .step { padding: 28px; }
-    .step .num {
-      width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center;
-      font-size: 20px; font-weight: 850; color: #fff;
-      background: linear-gradient(135deg, var(--brand), var(--brand-2));
-    }
-    .step h3 { margin: 16px 0 8px; font-size: 18px; font-weight: 750; }
-    .step p { margin: 0; color: var(--muted); font-size: 14px; }
-
-    /* ---------- Download ---------- */
-    .dl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
-    .dl { padding: 30px 26px; text-align: center; }
-    .dl .os { font-size: 15px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; }
-    .dl .name { font-size: 24px; font-weight: 820; margin: 10px 0 6px; }
-    .dl .meta { color: var(--muted); font-size: 13.5px; margin-bottom: 18px; }
-    .dl .btn { width: 100%; }
-
-    /* ---------- Footer ---------- */
-    .footer { padding: 40px 0 60px; }
-    .footer-bar {
-      padding: 26px; display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap;
-    }
-    .footer-bar a { color: var(--muted); text-decoration: none; font-size: 14px; margin-right: 18px; }
-    .footer-bar a:hover { color: var(--ink); }
-    .footer-copy { color: var(--muted); font-size: 13px; }
-
-    .reveal { opacity: 0; transform: translateY(22px); transition: opacity .7s ease, transform .7s ease; }
-    .reveal.in { opacity: 1; transform: none; }
-
-    @media (max-width: 920px) {
-      .hero-grid { grid-template-columns: 1fr; }
-      .feat-grid, .steps, .dl-grid { grid-template-columns: 1fr; }
-      .nav-links { display: none; }
-      .nav-toggle { display: flex; }
-      .nav.open .nav-links {
-        display: flex; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column; gap: 4px;
-        padding: 14px 18px; background: var(--glass-bg-strong); border-bottom: 1px solid var(--glass-border);
-        backdrop-filter: blur(26px);
-      }
-    }
-  </style>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='5' width='22' height='22' rx='7' fill='none' stroke='%23007aff' stroke-width='2.5'/%3E%3Ccircle cx='21' cy='21' r='4' fill='%23007aff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/css/styles.css" />
+  <script src="assets/js/main.js" defer></script>
 </head>
 <body>
   <!-- ===== Navbar ===== -->
@@ -277,7 +34,7 @@
   <section class="hero">
     <div class="wrap">
       <div class="hero-grid">
-        <div class="glass reveal" style="padding:30px;">
+        <div class="glass reveal">
           <div class="eyebrow"><span class="dot"></span> 考试现场的时间中枢</div>
           <h1>Aeterna</h1>
           <p class="hero-sub">可靠、清晰的<strong>考试日程播放</strong>与<strong>考场计时</strong>系统。基于 Rust + Qt 6 构建，运行于 Windows、macOS 与 Linux。</p>
@@ -313,32 +70,32 @@
       </div>
       <div class="feat-grid">
         <div class="glass feat reveal">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#0b6dff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#007aff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
           <h3>真实时间自动推进</h3>
           <p>在开始、结束与结束前提醒时自动切换状态，无需人工计时。</p>
         </div>
         <div class="glass feat reveal">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#0b6dff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#007aff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
           <h3>面向大屏的播放器</h3>
           <p>独立播放窗口，清晰展示科目、倒计时、考场号与公告。</p>
         </div>
         <div class="glass feat reveal">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#0b6dff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4zM8 8h8v8H8z"/></svg></div>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#007aff" stroke-width="2" stroke-linelight round="round" stroke-linejoin="round"><path d="M4 4h16v16H4zM8 8h8v8H8z"/></svg></div>
           <h3>可视化日程编辑</h3>
           <p>创建、排序与校验多场考试，时间、提醒与材料清单一目了然。</p>
         </div>
         <div class="glass feat reveal">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#0b6dff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></div>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#007aff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></div>
           <h3>多屏与远程能力</h3>
           <p>局域网设备发现投屏，并提供 HTTP API 供集成控制。</p>
         </div>
         <div class="glass feat reveal">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#0b6dff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/></svg></div>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#007aff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/></svg></div>
           <h3>NTP 校时</h3>
           <p>对时间准确性要求高的考场，支持网络时间校准。</p>
         </div>
         <div class="glass feat reveal">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#0b6dff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2 5 4-10 2 5h6"/></svg></div>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#007aff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2 5 4-10 2 5h6"/></svg></div>
           <h3>跨平台运行</h3>
           <p>Windows、macOS、Linux 原生支持，含浅色、深色与高对比度外观。</p>
         </div>
@@ -382,19 +139,19 @@
       </div>
       <div class="dl-grid">
         <div class="glass dl reveal">
-          <div class="os">WINDOWS</div>
+          <div class="es">WINDOWS</div>
           <div class="name">Windows</div>
           <div class="meta">运行 aeterna.exe · 64-bit</div>
           <a class="btn btn-primary" href="https://github.com/ziyi127/Aeterna/releases">下载</a>
         </div>
         <div class="glass dl reveal">
-          <div class="os">macOS</div>
+          <div class="es">macOS</div>
           <div class="name">macOS</div>
           <div class="meta">打开 aeterna.app · Apple Silicon / Intel</div>
           <a class="btn btn-primary" href="https://github.com/ziyi127/Aeterna/releases">下载</a>
         </div>
         <div class="glass dl reveal">
-          <div class="os">LINUX</div>
+          <div class="es">LINUX</div>
           <div class="name">Linux</div>
           <div class="meta">便携包已含 Qt 6 运行时</div>
           <a class="btn btn-primary" href="https://github.com/ziyi127/Aeterna/releases">下载</a>
@@ -421,18 +178,5 @@
       </div>
     </div>
   </footer>
-
-  <script>
-    // Mobile nav toggle
-    const nav = document.getElementById('nav');
-    const toggle = document.getElementById('navToggle');
-    toggle.addEventListener('click', () => nav.classList.toggle('open'));
-
-    // Scroll reveal
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
-    }, { threshold: 0.15 });
-    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-  </script>
 </body>
 </html>

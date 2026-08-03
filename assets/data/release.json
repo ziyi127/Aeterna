@@ -1,0 +1,10 @@
+{
+  "version": "2.0.5",
+  "tag": "v2.0.5",
+  "url": "https://github.com/ziyi127/Aeterna/releases/tag/v2.0.5",
+  "assets": {
+    "aeterna-arm64-macos": "https://github.com/ziyi127/Aeterna/releases/download/v2.0.5/aeterna-arm64-macos",
+    "aeterna-x86_64-linux": "https://github.com/ziyi127/Aeterna/releases/download/v2.0.5/aeterna-x86_64-linux",
+    "aeterna.exe": "https://github.com/ziyi127/Aeterna/releases/download/v2.0.5/aeterna.exe"
+  }
+}

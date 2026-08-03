@@ -20,9 +20,8 @@ import "."
 //   Warning   → Theme.warning
 //   Danger    → Theme.destructive
 //
-// No external dependencies — the tint is applied through
-// a simple fragment shader (ShaderEffect) so Qt5Compat is
-// never needed.
+// Qt 6 requires a precompiled QSB shader for portable ShaderEffect
+// rendering; the asset is generated from resources/shaders/icon_tint.frag.
 // =====================================================================
 
 Item {
@@ -86,14 +85,7 @@ Item {
         property variant src: sourceImg
         property color tint: iconRoot.tintColor
 
-        fragmentShader: "
-            varying highp vec2 qt_TexCoord0;
-            uniform sampler2D src;
-            uniform lowp vec4 tint;
-            void main() {
-                lowp vec4 tex = texture2D(src, qt_TexCoord0);
-                gl_FragColor = vec4(tint.rgb * tex.a, tex.a);
-            }"
+        fragmentShader: "qrc:/shaders/icon_tint.frag.qsb"
 
         Behavior on tint {
             ColorAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }

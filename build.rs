@@ -11,7 +11,9 @@ fn main() {
     //
     // qmetaobject calls pkg-config internally; we set the environment
     // so pkg-config returns --static flags.
-    if is_static_qt_available() {
+    // Static Qt is an explicit Linux-only opt-in. Host filesystem probing made
+    // ordinary builds vary unexpectedly between machines and targets.
+    if std::env::var_os("AETERNA_STATIC_QT").is_some() && is_static_qt_available() {
         println!("cargo:rustc-cfg=qt_static");
         println!("cargo:rustc-link-search=native=/usr/lib");
         // Tell pkg-config to emit static linking flags
@@ -65,10 +67,17 @@ fn main() {
             println!("cargo:rustc-link-lib={}", lib);
         }
     } else {
-        // Dynamic Qt — set rpath so the binary finds Qt libs in ../lib
-        // relative to itself (portable bundle layout).
-        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
-        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/qt6/plugins/platforms");
+        // 动态链接：按平台设置 rpath，使二进制能找到自带的 Qt 运行时。
+        // 注意：ELF 的 $ORIGIN 语法在 macOS 上无效，需使用 @executable_path。
+        #[cfg(target_os = "linux")]
+        {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
+        }
+        #[cfg(target_os = "macos")]
+        {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+        }
+        // Windows 通过并行程序集 / PATH 查找 DLL，无需 rpath。
     }
 
     // ── QRC resource embedding ──
@@ -107,9 +116,11 @@ fn main() {
     fs::write(&out_path, generated)
         .unwrap_or_else(|e| panic!("Failed to write {}: {}", out_path.display(), e));
 
+    println!("cargo:rerun-if-env-changed=AETERNA_STATIC_QT");
     println!("cargo:rerun-if-changed=resources/resources.qrc");
     println!("cargo:rerun-if-changed=resources/qml");
     println!("cargo:rerun-if-changed=resources/icons");
+    println!("cargo:rerun-if-changed=resources/shaders");
 }
 
 fn is_static_qt_available() -> bool {

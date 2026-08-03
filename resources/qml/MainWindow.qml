@@ -26,10 +26,13 @@ ApplicationWindow {
     property bool configValid: false
     property int examCount: 0
     property var loadedConfig: null
+    property var activePlayerWindow: null
 
     // ── Discover state ──
     property var discoveredDevices: []
     property bool scanning: false
+    property bool showShareStatus: true
+    property string appliedSharedConfig: ""
 
     // ── Responsive layout helpers ──
     property bool compactWidth: width < 900
@@ -39,6 +42,40 @@ ApplicationWindow {
     readonly property int contentSpacing: compactWidth ? Theme.spacing12 : (wideWidth ? Theme.spacing32 : Theme.spacing24)
     readonly property int sidebarWidth: compactWidth ? Theme.sidebarMin : (wideWidth ? Theme.sidebarMin + Theme.spacing64 : Theme.sidebarMin)
 
+    function handleDeepLink(link) {
+        if (typeof link === "string") {
+            try {
+                link = JSON.parse(link)
+            } catch (error) {
+                console.warn("Invalid deep link payload:", error)
+                return
+            }
+        }
+        if (!link || !link.action) return
+        switch (link.action) {
+        case "open":
+            if (link.file) {
+                loadConfigFromUrl(link.file)
+                enterPlayerPage()
+            }
+            break
+        case "player":
+            enterPlayerPage()
+            break
+        case "settings":
+            settingsLoader.openSettings(link.category || "basic")
+            break
+        case "editor":
+            editorLoader.openEditor()
+            break
+        case "cast":
+            currentPage = 1
+            break
+        default:
+            console.warn("Unsupported deep link action:", link.action)
+        }
+    }
+
     function loadConfigFromJson(jsonStr) {
         try {
             var config = JSON.parse(jsonStr)
@@ -46,6 +83,14 @@ ApplicationWindow {
                 loadedConfig = config
                 configValid = true
                 examCount = config.examInfos.length
+                configManager.config_json = jsonStr
+                if (mainWindow.activePlayerWindow && mainWindow.activePlayerWindow.loadExamData) {
+                    mainWindow.activePlayerWindow.loadExamData(loadedConfig)
+                }
+                if (jsonStr !== mainWindow.appliedSharedConfig) {
+                    shareManager.set_local_config(jsonStr)
+                }
+                mainWindow.appliedSharedConfig = ""
             } else {
                 configValid = false
                 examCount = 0
@@ -88,21 +133,94 @@ ApplicationWindow {
         scanTimer.restart()
     }
 
-    onClosing: {
-        // Accept the close request - exit app when user closes
+    onClosing: function(close) {
+        if (settingsWindowPreference.minimizeToTray && trayIcon.available) {
+            close.accepted = false
+            mainWindow.hide()
+        }
+    }
+
+    property var settingsWindowPreference: ({ minimizeToTray: false })
+
+    function syncTrayPreference() {
+        try {
+            settingsWindowPreference.minimizeToTray = JSON.parse(settingsBackend.settings_json).basic.minimize_to_tray === true
+        } catch (e) {
+            settingsWindowPreference.minimizeToTray = false
+        }
     }
 
     // Rust-backed types (engine init only)
     ConfigManager { id: configManager }
     AppInfo { id: appInfo }
     DiscoverManager { id: discoverManager }
+    ShareManager { id: shareManager }
     RecentFilesModel { id: recentFilesModel }
     ThemeDetector { id: themeDetector }
     SettingsBackend { id: settingsBackend }
 
+    Platform.SystemTrayIcon {
+        id: trayIcon
+        visible: available
+        icon.source: "qrc:/icons/icon.png"
+        tooltip: "Aeterna"
+
+        menu: Platform.Menu {
+            Platform.MenuItem {
+                text: "显示 Aeterna"
+                onTriggered: {
+                    mainWindow.show()
+                    mainWindow.raise()
+                    mainWindow.requestActivate()
+                }
+            }
+            Platform.MenuItem {
+                text: "打开编辑器"
+                onTriggered: editorLoader.openEditor()
+            }
+            Platform.MenuItem {
+                text: "打开设置"
+                onTriggered: settingsLoader.openSettings()
+            }
+            Platform.MenuSeparator {}
+            Platform.MenuItem {
+                text: "退出"
+                onTriggered: Qt.quit()
+            }
+        }
+
+        onActivated: function(reason) {
+            if (reason === Platform.SystemTrayIcon.Trigger || reason === Platform.SystemTrayIcon.DoubleClick) {
+                mainWindow.show()
+                mainWindow.raise()
+                mainWindow.requestActivate()
+            }
+        }
+    }
+
     // ── Theme initialization ──
+    function applyAccessibilityAppearance() {
+        try {
+            var appearance = JSON.parse(settingsBackend.settings_json).appearance
+            Theme.reduceTransparency = appearance.reduce_transparency === true
+            Theme.highContrast = appearance.high_contrast === true
+            Theme.reducedMotion = appearance.reduced_motion === true
+        } catch (e) {
+            Theme.reduceTransparency = false
+            Theme.highContrast = false
+            Theme.reducedMotion = false
+        }
+    }
+
     Component.onCompleted: {
-        // Detect system theme and use the return value directly
+        settingsBackend.load()
+        syncTrayPreference()
+        applyAccessibilityAppearance()
+        shareManager.refresh()
+        if (shareManager.active_config_json !== "") {
+            mainWindow.appliedSharedConfig = shareManager.active_config_json
+            mainWindow.loadConfigFromJson(shareManager.active_config_json)
+        }
         var systemDark = themeDetector.detect()
         // Apply theme mode from settings
         if (settingsBackend.theme_mode === "auto") {
@@ -127,6 +245,14 @@ ApplicationWindow {
         onTriggered: {
             var systemDark = themeDetector.detect()
             Theme.setDarkMode(systemDark === true)
+        }
+    }
+
+    Connections {
+        target: settingsBackend
+        function onSettings_jsonChanged() {
+            mainWindow.applyAccessibilityAppearance()
+            mainWindow.syncTrayPreference()
         }
     }
 
@@ -162,13 +288,12 @@ ApplicationWindow {
         running: false
         repeat: true
         onTriggered: {
+            discoverManager.refresh_devices()
             var jsonStr = discoverManager.devices_json
-            if (jsonStr !== "[]") {
-                try {
-                    discoveredDevices = JSON.parse(jsonStr)
-                } catch(e) {
-                    discoveredDevices = []
-                }
+            try {
+                discoveredDevices = JSON.parse(jsonStr)
+            } catch(e) {
+                discoveredDevices = []
             }
             if (!discoverManager.scanning) {
                 deviceRefreshTimer.stop()
@@ -189,6 +314,80 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: shareManager
+        function onActive_config_jsonChanged() {
+            if (shareManager.active_config_json !== "" && shareManager.active_config_json !== mainWindow.loadedConfig) {
+                mainWindow.appliedSharedConfig = shareManager.active_config_json
+                mainWindow.loadConfigFromJson(shareManager.active_config_json)
+            }
+        }
+    }
+
+    Timer {
+        id: shareRefreshTimer
+        interval: 500
+        running: true
+        repeat: true
+        onTriggered: {
+            shareManager.refresh()
+            var pending = []
+            try { pending = JSON.parse(shareManager.pending_shares_json) } catch (e) {}
+            if (pending.length > 0 && !incomingShareDialog.visible) {
+                incomingShareDialog.share = pending[0]
+                incomingShareDialog.open()
+            }
+        }
+    }
+
+    Dialog {
+        id: incomingShareDialog
+        property var share: null
+        title: "收到远程配置"
+        modal: true
+        anchors.centerIn: parent
+        closePolicy: Popup.NoAutoClose
+        standardButtons: Dialog.NoButton
+        padding: Theme.spacing24
+        background: Rectangle {
+            color: Theme.materialOverlay
+            radius: Theme.radiusLarge
+            border.color: Theme.hairline
+            border.width: 1
+        }
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing12
+            Text { text: incomingShareDialog.share ? ("设备：" + incomingShareDialog.share.sender_name) : ""; color: Theme.foreground; font.family: Theme.fontSans }
+            Text { text: incomingShareDialog.share ? ("配置：" + incomingShareDialog.share.exam_name + "（" + incomingShareDialog.share.exam_count + " 场考试）") : ""; color: Theme.mutedForeground; font.family: Theme.fontSans; wrapMode: Text.WordWrap }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                PinguoButton {
+                    text: "拒绝"
+                    variant: PinguoButton.Secondary
+                    onClicked: {
+                        if (incomingShareDialog.share) shareManager.reject_share(incomingShareDialog.share.share_id)
+                        incomingShareDialog.close()
+                    }
+                }
+                PinguoButton {
+                    text: "接受"
+                    variant: PinguoButton.Hero
+                    onClicked: {
+                        if (incomingShareDialog.share) {
+                            var json = shareManager.approve_share(incomingShareDialog.share.share_id)
+                            if (json !== "") {
+                                mainWindow.appliedSharedConfig = json
+                                mainWindow.loadConfigFromJson(json)
+                            }
+                        }
+                        incomingShareDialog.close()
+                    }
+                }
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Page transition: short fade between pages (HIG motionShort)
     // ═══════════════════════════════════════════════════════════════
@@ -203,14 +402,13 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0 // sidebar and content are edge-to-edge; 0 is intentional
 
-        // Left sidebar — HIG Material.Elevated, 1px hairline on the right
-        Material {
+        // Left sidebar — strongest continuous glass navigation layer
+        GlassSurface {
             Layout.preferredWidth: mainWindow.sidebarWidth
             Layout.fillHeight: true
-            tier: Material.Elevated
-            radius: 0 // edge-to-edge sidebar
+            variant: GlassSurface.Navigation
+            radius: 0
             bordered: true
-            liquidGlass: true
 
             // 1px hairline on right edge of sidebar
             Rectangle {
@@ -461,8 +659,8 @@ ApplicationWindow {
                                                 urlPlayerDialog.open()
                                             } else if (action === "openSettings") {
                                                 settingsLoader.openSettings()
-                                            } else if (action === "pluginsComingSoon") {
-                                                pluginsComingSoonDialog.open()
+                                            } else if (action === "openPlugins") {
+                                                pluginLoader.openPlugins()
                                             } else if (action === "openAbout") {
                                                 aboutDialog.open()
                                             }
@@ -578,22 +776,38 @@ ApplicationWindow {
 
                                         Icon {
                                             size: 16
-                                            tier: modelData.status === "在线" ? Icon.Success : Icon.Secondary
-                                            name: modelData.status === "在线" ? "checkmark.circle" : "xmark"
+                                            tier: modelData.share_supported ? Icon.Success : Icon.Secondary
+                                            name: modelData.share_supported ? "checkmark.circle" : "xmark"
                                             accessibleName: modelData.status
                                             Layout.alignment: Qt.AlignVCenter
                                         }
-                                        Text {
-                                            text: modelData.name
-                                            color: Theme.foreground
-                                            font.pixelSize: Theme.typeSubhead
-                                            font.family: Theme.fontSans
+                                        ColumnLayout {
                                             Layout.fillWidth: true
-                                            Layout.alignment: Qt.AlignVCenter
+                                            spacing: Theme.spacing4
+                                            Text {
+                                                text: modelData.name
+                                                color: Theme.foreground
+                                                font.pixelSize: Theme.typeSubhead
+                                                font.family: Theme.fontSans
+                                            }
+                                            Text {
+                                                text: modelData.endpoint + (modelData.share_supported ? " · 已验证分享能力" : " · 未开放受认证分享")
+                                                color: Theme.mutedForeground
+                                                font.pixelSize: Theme.typeCaption1
+                                                font.family: Theme.fontSans
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+                                        PinguoButton {
+                                            text: "发送配置"
+                                            variant: PinguoButton.Secondary
+                                            enabled: mainWindow.configValid && modelData.share_supported
+                                            onClicked: shareManager.share_current_config_to(modelData.id)
                                         }
                                         Text {
                                             text: modelData.status
-                                            color: modelData.status === "在线" ? Theme.success : Theme.mutedForeground
+                                            color: modelData.share_supported ? Theme.success : Theme.mutedForeground
                                             font.pixelSize: Theme.typeFootnote
                                             font.family: Theme.fontSans
                                             Layout.alignment: Qt.AlignVCenter
@@ -966,7 +1180,7 @@ ApplicationWindow {
         ListElement { label: "放映器";     iconName: "play";         action: "player";         hint: "" }
         ListElement { label: "从URL放映";  iconName: "link";         action: "urlPlayer";      hint: "" }
         ListElement { label: "设置";       iconName: "gear";         action: "openSettings";   hint: "" }
-        ListElement { label: "插件服务";   iconName: "puzzle";       action: "pluginsComingSoon"; hint: "即将上线" }
+        ListElement { label: "插件服务";   iconName: "puzzle";       action: "openPlugins";     hint: "本地清单" }
         ListElement { label: "帮助";       iconName: "questionmark"; action: "openAbout";      hint: "" }
         ListElement { label: "关于";       iconName: "info";         action: "openAbout";      hint: "" }
     }
@@ -1020,6 +1234,10 @@ ApplicationWindow {
                     console.error("Failed to create PlayerWindow instance")
                     return
                 }
+                mainWindow.activePlayerWindow = win
+                win.destroyed.connect(function() {
+                    if (mainWindow.activePlayerWindow === win) mainWindow.activePlayerWindow = null
+                })
                 win.showFullScreen()
                 if (mainWindow.loadedConfig && win.loadExamData) {
                     win.loadExamData(mainWindow.loadedConfig)
@@ -1036,6 +1254,32 @@ ApplicationWindow {
     }
 
     Loader {
+        id: pluginLoader
+        function openPlugins() {
+            var comp = Qt.createComponent("qrc:/qml/PluginStoreWindow.qml")
+            function doCreate() {
+                if (comp.status !== Component.Ready) {
+                    console.error("PluginStoreWindow not ready: " + comp.errorString())
+                    return
+                }
+                var win = comp.createObject(mainWindow)
+                if (!win) {
+                    console.error("Failed to create PluginStoreWindow instance")
+                    return
+                }
+                win.show()
+            }
+            if (comp.status === Component.Ready) {
+                doCreate()
+            } else if (comp.status === Component.Error) {
+                console.error("Failed to load PluginStoreWindow: " + comp.errorString())
+            } else {
+                comp.statusChanged.connect(doCreate)
+            }
+        }
+    }
+
+    Loader {
         id: settingsLoader
         function openSettings(category) {
             var comp = Qt.createComponent("qrc:/qml/SettingsWindow.qml")
@@ -1044,7 +1288,10 @@ ApplicationWindow {
                     console.error("SettingsWindow not ready: " + comp.errorString())
                     return
                 }
-                var props = {"settingsBackend": settingsBackend}
+                var props = {
+                    "settingsBackend": settingsBackend,
+                    "trayIconAvailable": trayIcon.available
+                }
                 if (category) props.initialCategory = category
                 var win = comp.createObject(mainWindow, props)
                 if (!win) {

@@ -1,41 +1,24 @@
-//! HTTP API 服务
+//! Lightweight HTTP API server — zero external dependencies.
 //!
-//! 提供基于 actix-web 的 HTTP API 服务，支持：
-//! - 健康检查端点
-//! - 时间查询端点
-//! - 配置管理端点
-//! - Swagger/OpenAPI JSON 端点
-//! - Token 认证中间件
-//! - CORS 中间件
-//! - 速率限制
-//! - WebSocket 支持
+//! A minimal `std::net` + `std::thread` server (no actix, no tokio).
+//! Provides: health, time, config, status, WebSocket endpoints.
 
-use actix_cors::Cors;
-use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
-use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::io::{BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// 速率限制器
-///
-/// 跟踪每个 IP 在时间窗口内的请求数量，超出限制时返回 429。
+/// Simple thread-safe rate limiter.
 pub struct RateLimiter {
-    /// IP -> 请求时间戳列表
     requests: Mutex<HashMap<String, Vec<Instant>>>,
-    /// 每个 IP 每分钟允许的最大请求数
     max_requests: usize,
-    /// 时间窗口长度
     window: Duration,
 }
 
 impl RateLimiter {
-    /// 创建新的速率限制器
-    ///
-    /// # 参数
-    /// - `max_requests`: 时间窗口内允许的最大请求数
-    /// - `window`: 时间窗口长度
     pub fn new(max_requests: usize, window: Duration) -> Self {
         RateLimiter {
             requests: Mutex::new(HashMap::new()),
@@ -44,72 +27,32 @@ impl RateLimiter {
         }
     }
 
-    /// 创建默认限制器（100 请求/分钟/IP）
     pub fn default_limiter() -> Self {
         Self::new(100, Duration::from_secs(60))
     }
 
-    /// 检查请求是否允许通过
-    ///
-    /// 返回 true 表示允许，false 表示超出限制。
     pub fn check(&self, ip: &str) -> bool {
         let mut requests = self.requests.lock().unwrap();
         let now = Instant::now();
         let cutoff = now - self.window;
-
         let entry = requests.entry(ip.to_string()).or_default();
-
-        // 清理过期的时间戳
         entry.retain(|&t| t > cutoff);
-
         if entry.len() >= self.max_requests {
             return false;
         }
-
         entry.push(now);
         true
     }
 
-    /// 获取指定 IP 的剩余请求数
-    pub fn remaining(&self, ip: &str) -> usize {
-        let mut requests = self.requests.lock().unwrap();
-        let now = Instant::now();
-        let cutoff = now - self.window;
-
-        if let Some(entry) = requests.get_mut(ip) {
-            entry.retain(|&t| t > cutoff);
-            self.max_requests.saturating_sub(entry.len())
-        } else {
-            self.max_requests
-        }
-    }
-
-    /// 重置指定 IP 的计数器
     #[allow(dead_code)]
     pub fn reset(&self, ip: &str) {
         if let Ok(mut requests) = self.requests.lock() {
             requests.remove(ip);
         }
     }
-
-    /// 重置所有计数器
-    #[allow(dead_code)]
-    pub fn reset_all(&self) {
-        if let Ok(mut requests) = self.requests.lock() {
-            requests.clear();
-        }
-    }
 }
 
-/// API 服务配置
-///
-/// 控制 HTTP API 服务器的所有行为：
-/// - `enabled`: 是否启用 HTTP API
-/// - `port`: 监听端口
-/// - `bind_address`: 绑定地址（`0.0.0.0` 监听所有网卡）
-/// - `token_auth`: 是否启用 Bearer Token 认证
-/// - `token`: 认证令牌
-/// - `allow_cors`: 是否允许跨域请求
+/// API service configuration.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub enabled: bool,
@@ -125,181 +68,262 @@ impl Default for ApiConfig {
         ApiConfig {
             enabled: true,
             port: 9527,
-            bind_address: "0.0.0.0".to_string(),
+            bind_address: "127.0.0.1".to_string(),
             token_auth: false,
             token: String::new(),
-            allow_cors: true,
+            allow_cors: false,
         }
     }
 }
 
-/// API 服务状态
+impl ApiConfig {
+    pub fn from_settings(settings: &crate::ui::settings_window::HttpApiSettings) -> Self {
+        let port = u16::try_from(settings.port).unwrap_or(9527);
+        let bind_address = settings.bind_address.trim();
+        let bind_address = if bind_address.is_empty() {
+            "127.0.0.1"
+        } else {
+            bind_address
+        };
+        let is_loopback = matches!(bind_address, "127.0.0.1" | "::1" | "localhost");
+        let token = settings.token.trim().to_string();
+
+        ApiConfig {
+            enabled: settings.enabled,
+            port,
+            bind_address: bind_address.to_string(),
+            token_auth: settings.token_auth || (!is_loopback && !token.is_empty()),
+            token,
+            allow_cors: settings.allow_cors,
+        }
+    }
+}
+
+const MAX_CONCURRENT_CONNECTIONS: usize = 32;
+
+static SERVICE: OnceLock<Arc<HttpApiService>> = OnceLock::new();
+
+pub fn install(service: Arc<HttpApiService>) -> Result<(), Arc<HttpApiService>> {
+    SERVICE.set(service)
+}
+
+pub fn global() -> Option<Arc<HttpApiService>> {
+    SERVICE.get().cloned()
+}
+
+struct ConnectionLimiter {
+    active: AtomicUsize,
+    maximum: usize,
+}
+
+impl ConnectionLimiter {
+    fn new(maximum: usize) -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+            maximum,
+        }
+    }
+
+    fn try_acquire(self: &Arc<Self>) -> Option<ConnectionPermit> {
+        let mut active = self.active.load(Ordering::Acquire);
+        loop {
+            if active >= self.maximum {
+                return None;
+            }
+            match self.active.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(ConnectionPermit {
+                        limiter: self.clone(),
+                    })
+                }
+                Err(current) => active = current,
+            }
+        }
+    }
+}
+
+struct ConnectionPermit {
+    limiter: Arc<ConnectionLimiter>,
+}
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.limiter.active.fetch_sub(1, Ordering::Release);
+    }
+}
+
+struct ApiState {
+    service: Arc<HttpApiService>,
+    version: &'static str,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiStatus {
     pub running: bool,
     pub port: u16,
     pub uptime_seconds: u64,
     pub version: String,
-}
-
-/// 健康检查响应
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthResponse {
-    pub status: String,
-    pub version: String,
-    pub timestamp: String,
-}
-
-/// 时间查询响应
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimeResponse {
-    pub timestamp_ms: i64,
-    pub datetime: String,
-    pub timezone: String,
-}
-
-/// 配置管理请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConfigRequest {
-    pub exam_name: String,
     pub message: String,
-    pub exam_infos: Vec<ExamInfoRequest>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExamInfoRequest {
-    pub name: String,
-    pub start: String,
-    pub end: String,
-    #[serde(rename = "alertTime")]
-    pub alert_time: i32,
+struct ServerLifecycle {
+    listener: Option<TcpListener>,
+    port: u16,
+    message: String,
 }
 
-/// HTTP API 服务
+/// HTTP API service. Its supervisor runs for the application's lifetime,
+/// including while the API is disabled, so settings can enable it live.
 pub struct HttpApiService {
     config: Mutex<ApiConfig>,
-    start_time: std::time::Instant,
+    lifecycle: Mutex<ServerLifecycle>,
+    start_time: Instant,
     rate_limiter: Arc<RateLimiter>,
+    share_runtime: Arc<crate::services::share_runtime::ShareRuntime>,
 }
 
 impl HttpApiService {
     pub fn new() -> Self {
-        HttpApiService {
-            config: Mutex::new(ApiConfig::default()),
-            start_time: std::time::Instant::now(),
-            rate_limiter: Arc::new(RateLimiter::default_limiter()),
-        }
+        Self::with_config(ApiConfig::default())
     }
 
-    #[allow(dead_code)]
     pub fn with_config(config: ApiConfig) -> Self {
-        HttpApiService {
+        let runtime =
+            crate::services::share_runtime::global().unwrap_or_else(default_share_runtime);
+        Self::with_config_and_runtime(config, runtime)
+    }
+
+    pub fn with_config_and_runtime(
+        config: ApiConfig,
+        share_runtime: Arc<crate::services::share_runtime::ShareRuntime>,
+    ) -> Self {
+        Self {
             config: Mutex::new(config),
-            start_time: std::time::Instant::now(),
+            lifecycle: Mutex::new(ServerLifecycle {
+                listener: None,
+                port: 0,
+                message: "HTTP API supervisor has not started".to_string(),
+            }),
+            start_time: Instant::now(),
             rate_limiter: Arc::new(RateLimiter::default_limiter()),
+            share_runtime,
         }
     }
 
-    /// 创建自定义速率限制的 API 服务
-    #[allow(dead_code)]
-    pub fn with_rate_limit(max_requests: usize, window_seconds: u64) -> Self {
-        HttpApiService {
-            config: Mutex::new(ApiConfig::default()),
-            start_time: std::time::Instant::now(),
-            rate_limiter: Arc::new(RateLimiter::new(
-                max_requests,
-                Duration::from_secs(window_seconds),
-            )),
+    /// Applies configuration atomically. For an enabled server, the new address
+    /// is bound before the old listener is released; a bind failure leaves both
+    /// the current listener and the active configuration untouched.
+    pub fn reconfigure(&self, config: ApiConfig) -> std::io::Result<()> {
+        let bind_addr = config
+            .enabled
+            .then(|| resolve_bind_address(&config))
+            .transpose()?;
+        {
+            let lifecycle = self.lifecycle.lock().unwrap();
+            if let (Some(listener), Some(bind_addr)) = (&lifecycle.listener, bind_addr) {
+                if listener.local_addr()? == bind_addr {
+                    *self.config.lock().unwrap() = config;
+                    return Ok(());
+                }
+            }
         }
+
+        let candidate = match bind_addr {
+            Some(bind_addr) => {
+                let listener = TcpListener::bind(bind_addr)?;
+                listener.set_nonblocking(true)?;
+                Some(listener)
+            }
+            None => None,
+        };
+        let candidate_port = candidate
+            .as_ref()
+            .map(TcpListener::local_addr)
+            .transpose()?
+            .map(|address| address.port())
+            .unwrap_or(0);
+
+        let mut lifecycle = self.lifecycle.lock().unwrap();
+        *self.config.lock().unwrap() = config;
+        lifecycle.listener = candidate;
+        lifecycle.port = candidate_port;
+        lifecycle.message = if candidate_port == 0 {
+            "HTTP API is disabled".to_string()
+        } else {
+            format!("HTTP API listening on port {candidate_port}")
+        };
+        Ok(())
     }
 
-    /// 更新配置
-    #[allow(dead_code)]
-    pub fn update_config(&self, config: ApiConfig) {
-        if let Ok(mut c) = self.config.lock() {
-            *c = config;
+    /// Runs the lifetime supervisor. It deliberately remains active when
+    /// disabled so `reconfigure` can later install a listener without restart.
+    pub fn start(self: Arc<Self>) -> std::io::Result<()> {
+        if let Err(error) = self.reconfigure(self.config.lock().unwrap().clone()) {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            lifecycle.message = format!("HTTP API unavailable: {error}");
+            log::warn!("{}", lifecycle.message);
         }
-    }
-
-    /// 启动 HTTP API 服务器
-    ///
-    /// 返回一个 tokio task handle，服务器在后台运行。
-    pub async fn start(&self) -> std::io::Result<()> {
-        let config = self.config.lock().unwrap().clone();
-
-        if !config.enabled {
-            info!("HTTP API is disabled");
-            return Ok(());
-        }
-
-        let bind_addr = format!("{}:{}", config.bind_address, config.port);
-        let token = config.token.clone();
-        let token_auth = config.token_auth;
-        let allow_cors = config.allow_cors;
-        let start_time = self.start_time;
-        let rate_limiter = self.rate_limiter.clone();
-
-        info!("Starting HTTP API server on {}", bind_addr);
-
-        HttpServer::new(move || {
-            let cors = if allow_cors {
-                Cors::default()
-                    .allow_any_origin()
-                    .allow_any_method()
-                    .allow_any_header()
-            } else {
-                Cors::default()
+        let connection_limiter = Arc::new(ConnectionLimiter::new(MAX_CONCURRENT_CONNECTIONS));
+        loop {
+            let listener = self
+                .lifecycle
+                .lock()
+                .unwrap()
+                .listener
+                .as_ref()
+                .and_then(|listener| listener.try_clone().ok());
+            let Some(listener) = listener else {
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
             };
-
-            // 所有 worker 共享同一个限制器，保证配置的额度真实生效。
-            let rate_limiter = web::Data::new(rate_limiter.clone());
-
-            App::new()
-                .wrap(cors)
-                .wrap(middleware::Logger::default())
-                .app_data(web::Data::new(ApiState {
-                    token: token.clone(),
-                    token_auth,
-                    start_time,
-                }))
-                .app_data(rate_limiter)
-                // 健康检查
-                .route("/health", web::get().to(health_check))
-                .route("/api/health", web::get().to(health_check))
-                // 时间查询
-                .route("/api/time", web::get().to(get_time))
-                .route("/api/time/ntp", web::get().to(get_ntp_status))
-                // 配置管理
-                .route("/api/config", web::get().to(get_config))
-                .route("/api/config", web::post().to(update_config))
-                // 状态
-                .route("/api/status", web::get().to(get_status))
-                // Swagger JSON
-                .route("/api/swagger.json", web::get().to(swagger_json))
-                // WebSocket
-                .route("/api/ws", web::get().to(ws_handler))
-        })
-        .bind(&bind_addr)?
-        .run()
-        .await
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let Some(permit) = connection_limiter.try_acquire() else {
+                        let _ = write_response(
+                            &mut stream,
+                            503,
+                            "{\"error\":\"Service Unavailable\"}",
+                            "application/json",
+                            None,
+                        );
+                        continue;
+                    };
+                    let state = ApiState {
+                        service: self.clone(),
+                        version: env!("CARGO_PKG_VERSION"),
+                    };
+                    std::thread::spawn(move || {
+                        let _permit = permit;
+                        handle_connection(stream, &state);
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => log::warn!("HTTP accept error: {error}"),
+            }
+        }
     }
 
-    /// 获取运行时间（秒）
+    pub fn status(&self) -> ApiStatus {
+        let lifecycle = self.lifecycle.lock().unwrap();
+        ApiStatus {
+            running: lifecycle.listener.is_some(),
+            port: lifecycle.port,
+            uptime_seconds: self.start_time.elapsed().as_secs(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            message: lifecycle.message.clone(),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
-    }
-
-    /// 获取当前状态
-    #[allow(dead_code)]
-    pub fn status(&self) -> ApiStatus {
-        let config = self.config.lock().unwrap();
-        ApiStatus {
-            running: config.enabled,
-            port: config.port,
-            uptime_seconds: self.uptime_seconds(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        }
     }
 }
 
@@ -309,315 +333,513 @@ impl Default for HttpApiService {
     }
 }
 
-/// API 共享状态
-struct ApiState {
-    token: String,
-    token_auth: bool,
-    start_time: std::time::Instant,
+fn default_share_runtime() -> Arc<crate::services::share_runtime::ShareRuntime> {
+    #[cfg(feature = "cast")]
+    {
+        Arc::new(crate::services::share_runtime::ShareRuntime::new(
+            crate::ui::settings_window::Settings::default(),
+            Arc::new(crate::services::cast::CastService::new()),
+        ))
+    }
+    #[cfg(not(feature = "cast"))]
+    {
+        Arc::new(crate::services::share_runtime::ShareRuntime::new(
+            crate::ui::settings_window::Settings::default(),
+        ))
+    }
 }
 
-/// 验证 Token
-fn validate_token(req: &HttpRequest, state: &ApiState) -> bool {
-    if !state.token_auth || state.token.is_empty() {
-        return true;
+fn resolve_bind_address(cfg: &ApiConfig) -> std::io::Result<std::net::SocketAddr> {
+    if cfg.token_auth && cfg.token.trim().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "HTTP token authentication requires a non-empty token",
+        ));
     }
 
-    let auth_header = req
-        .headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    if let Some(token) = auth_header.strip_prefix("Bearer ") {
-        return token == state.token;
-    }
-
-    false
-}
-
-/// 从请求中提取客户端 IP 地址
-fn extract_client_ip(req: &HttpRequest) -> String {
-    // 优先从 X-Forwarded-For 头获取
-    if let Some(forwarded) = req.headers().get("X-Forwarded-For") {
-        if let Ok(val) = forwarded.to_str() {
-            if let Some(ip) = val.split(',').next() {
-                return ip.trim().to_string();
-            }
-        }
-    }
-    // 其次从 X-Real-IP 头获取
-    if let Some(real_ip) = req.headers().get("X-Real-IP") {
-        if let Ok(val) = real_ip.to_str() {
-            return val.trim().to_string();
-        }
-    }
-    // 最后从连接信息获取
-    req.peer_addr()
-        .map(|addr| addr.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// 检查速率限制，超出限制时返回 429 响应
-fn check_rate_limit(req: &HttpRequest, limiter: &web::Data<RateLimiter>) -> Option<HttpResponse> {
-    let ip = extract_client_ip(req);
-    if !limiter.check(&ip) {
-        let remaining = limiter.remaining(&ip);
-        Some(
-            HttpResponse::TooManyRequests()
-                .insert_header(("Retry-After", "60"))
-                .insert_header(("X-RateLimit-Limit", "100"))
-                .insert_header(("X-RateLimit-Remaining", remaining.to_string()))
-                .json(serde_json::json!({
-                    "error": "Too Many Requests",
-                    "message": "请求过于频繁，请稍后再试",
-                    "retry_after_seconds": 60
-                })),
-        )
+    let address = if cfg.bind_address.contains(':') && !cfg.bind_address.starts_with('[') {
+        format!("[{}]:{}", cfg.bind_address, cfg.port)
     } else {
-        None
-    }
-}
-
-/// 健康检查端点
-async fn health_check(req: HttpRequest, limiter: web::Data<RateLimiter>) -> HttpResponse {
-    if let Some(response) = check_rate_limit(&req, &limiter) {
-        return response;
-    }
-    let response = HealthResponse {
-        status: "ok".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        format!("{}:{}", cfg.bind_address, cfg.port)
     };
-    HttpResponse::Ok().json(response)
+    let bind_addr = address.to_socket_addrs()?.next().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid bind address")
+    })?;
+    if !bind_addr.ip().is_loopback() && cfg.token.trim().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "non-loopback HTTP binding requires a token",
+        ));
+    }
+    Ok(bind_addr)
 }
 
-/// 获取时间
-async fn get_time(req: HttpRequest, limiter: web::Data<RateLimiter>) -> HttpResponse {
-    if let Some(response) = check_rate_limit(&req, &limiter) {
-        return response;
+const MAX_REQUEST_LINE_BYTES: usize = 8 * 1024;
+const MAX_HEADER_LINE_BYTES: usize = 8 * 1024;
+const MAX_HEADER_BYTES: usize = 32 * 1024;
+const MAX_HEADERS: usize = 64;
+const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+/// Parse a single bounded HTTP/1 request. One request is processed per connection.
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+    peer_ip: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RequestParseError {
+    BadRequest,
+    PayloadTooLarge,
+    HeaderTooLarge,
+    NotImplemented,
+}
+
+impl RequestParseError {
+    fn status(self) -> u16 {
+        match self {
+            Self::BadRequest => 400,
+            Self::PayloadTooLarge => 413,
+            Self::HeaderTooLarge => 431,
+            Self::NotImplemented => 501,
+        }
     }
+}
+
+fn read_crlf_line<R: Read>(reader: &mut R, maximum: usize) -> Result<Vec<u8>, RequestParseError> {
+    let mut line = Vec::with_capacity(maximum.min(256));
+    let mut byte = [0_u8; 1];
+    loop {
+        reader
+            .read_exact(&mut byte)
+            .map_err(|_| RequestParseError::BadRequest)?;
+        if byte[0] == b'\n' {
+            if line.pop() != Some(b'\r') {
+                return Err(RequestParseError::BadRequest);
+            }
+            return Ok(line);
+        }
+        if byte[0] == b'\r' {
+            line.push(byte[0]);
+            continue;
+        }
+        if line.len() >= maximum {
+            return Err(RequestParseError::HeaderTooLarge);
+        }
+        line.push(byte[0]);
+    }
+}
+
+fn is_token(value: &[u8]) -> bool {
+    !value.is_empty()
+        && value.iter().all(|byte| {
+            matches!(
+                byte,
+                b'!'
+                    | b'#'..=b'\''
+                    | b'*'..=b'+'
+                    | b'-'..=b'.'
+                    | b'0'..=b'9'
+                    | b'A'..=b'Z'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'a'..=b'z'
+                    | b'|'
+                    | b'~'
+            )
+        })
+}
+
+fn parse_request<R: Read>(
+    reader: &mut R,
+    peer_ip: String,
+) -> Result<HttpRequest, RequestParseError> {
+    let request_line = read_crlf_line(reader, MAX_REQUEST_LINE_BYTES)?;
+    let request_line =
+        std::str::from_utf8(&request_line).map_err(|_| RequestParseError::BadRequest)?;
+    let fields: Vec<&str> = request_line.split(' ').collect();
+    if fields.len() != 3
+        || !is_token(fields[0].as_bytes())
+        || fields[1].is_empty()
+        || !matches!(fields[2], "HTTP/1.0" | "HTTP/1.1")
+    {
+        return Err(RequestParseError::BadRequest);
+    }
+    let method = fields[0].to_uppercase();
+    let path = fields[1].split('?').next().unwrap_or(fields[1]).to_string();
+
+    let mut headers = HashMap::new();
+    let mut header_bytes = 0;
+    loop {
+        let line = read_crlf_line(reader, MAX_HEADER_LINE_BYTES)?;
+        if line.is_empty() {
+            break;
+        }
+        header_bytes += line.len();
+        if header_bytes > MAX_HEADER_BYTES || headers.len() >= MAX_HEADERS {
+            return Err(RequestParseError::HeaderTooLarge);
+        }
+        let colon = line
+            .iter()
+            .position(|byte| *byte == b':')
+            .ok_or(RequestParseError::BadRequest)?;
+        let (name, value) = line.split_at(colon);
+        let value = &value[1..];
+        if !is_token(name)
+            || name.last() == Some(&b' ')
+            || value.iter().any(|byte| *byte < 0x20 && *byte != b'\t')
+        {
+            return Err(RequestParseError::BadRequest);
+        }
+        let name = std::str::from_utf8(name)
+            .map_err(|_| RequestParseError::BadRequest)?
+            .to_ascii_lowercase();
+        let value = std::str::from_utf8(value)
+            .map_err(|_| RequestParseError::BadRequest)?
+            .trim()
+            .to_string();
+        if headers.insert(name, value).is_some() {
+            return Err(RequestParseError::BadRequest);
+        }
+    }
+
+    if headers.contains_key("transfer-encoding") {
+        return Err(RequestParseError::NotImplemented);
+    }
+    let body_len = match headers.get("content-length") {
+        Some(value) if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) => {
+            value
+                .parse::<usize>()
+                .map_err(|_| RequestParseError::BadRequest)?
+        }
+        Some(_) => return Err(RequestParseError::BadRequest),
+        None => 0,
+    };
+    if body_len > MAX_BODY_BYTES {
+        return Err(RequestParseError::PayloadTooLarge);
+    }
+    let mut body = vec![0; body_len];
+    reader
+        .read_exact(&mut body)
+        .map_err(|_| RequestParseError::BadRequest)?;
+
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+        peer_ip,
+    })
+}
+
+fn handle_connection(mut stream: TcpStream, state: &ApiState) {
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
+    let peer_ip = match stream.peer_addr() {
+        Ok(address) => address.ip().to_string(),
+        Err(e) => {
+            log::warn!("Unable to determine HTTP peer address: {e}");
+            return;
+        }
+    };
+    let req = {
+        let mut reader = BufReader::new(&mut stream);
+        parse_request(&mut reader, peer_ip)
+    };
+    let req = match req {
+        Ok(request) => request,
+        Err(error) => {
+            let _ = write_response(
+                &mut stream,
+                error.status(),
+                "Bad Request",
+                "text/plain",
+                None,
+            );
+            return;
+        }
+    };
+    let config = state.service.config.lock().unwrap().clone();
+    let cors = config.allow_cors.then_some(CorsPolicy);
+
+    if req.method == "OPTIONS" && req.path.starts_with("/api/") {
+        if cors.is_some() {
+            let _ = write_response(&mut stream, 204, "", "text/plain", cors);
+        } else {
+            let _ = write_response(
+                &mut stream,
+                404,
+                r#"{"error":"Not Found"}"#,
+                "application/json",
+                None,
+            );
+        }
+        return;
+    }
+    if !state.service.rate_limiter.check(&req.peer_ip) {
+        let _ = write_response(
+            &mut stream,
+            429,
+            r#"{"error":"Too Many Requests","retry_after_seconds":60}"#,
+            "application/json",
+            cors,
+        );
+        return;
+    }
+    let protected = req.path.starts_with("/api/config");
+    if protected && config.token_auth {
+        let valid = req
+            .headers
+            .get("authorization")
+            .and_then(|value| value.strip_prefix("Bearer "))
+            == Some(config.token.as_str());
+        if !valid {
+            let _ = write_response(
+                &mut stream,
+                401,
+                r#"{"error":"Invalid or missing token"}"#,
+                "application/json",
+                cors,
+            );
+            return;
+        }
+    }
+    match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/health") | ("GET", "/api/health") => handle_health(&mut stream, state, cors),
+        ("GET", "/api/time") => handle_time(&mut stream, cors),
+        ("GET", "/api/time/ntp") => handle_ntp_status(&mut stream, cors),
+        ("GET", "/api/status") => handle_status(&mut stream, state, cors),
+        ("GET", "/api/config") => handle_get_config(&mut stream, state, cors),
+        ("POST", "/api/config") => handle_post_config(&mut stream, &req, state, cors),
+        ("GET", "/api/swagger.json") => handle_swagger(&mut stream, state, cors),
+        ("GET", "/api/ws") => handle_ws_unavailable(&mut stream, cors),
+        _ => {
+            let _ = write_response(
+                &mut stream,
+                404,
+                r#"{"error":"Not Found"}"#,
+                "application/json",
+                cors,
+            );
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CorsPolicy;
+
+impl CorsPolicy {
+    fn headers(self) -> &'static str {
+        "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Max-Age: 600\r\n"
+    }
+}
+
+fn write_response(
+    stream: &mut TcpStream,
+    status: u16,
+    body: &str,
+    content_type: &str,
+    cors: Option<CorsPolicy>,
+) -> std::io::Result<()> {
+    let status_text = match status {
+        101 => "Switching Protocols",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        409 => "Conflict",
+        413 => "Payload Too Large",
+        429 => "Too Many Requests",
+        431 => "Request Header Fields Too Large",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        503 => "Service Unavailable",
+        _ => "Unknown",
+    };
+    let cors_headers = cors.map(CorsPolicy::headers).unwrap_or("");
+    let response = format!("HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n{cors_headers}\r\n{body}", body.len());
+    stream.write_all(response.as_bytes())
+}
+
+fn json_response(
+    stream: &mut TcpStream,
+    status: u16,
+    data: &serde_json::Value,
+    cors: Option<CorsPolicy>,
+) {
+    let body = serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string());
+    let _ = write_response(stream, status, &body, "application/json", cors);
+}
+
+fn handle_health(stream: &mut TcpStream, state: &ApiState, cors: Option<CorsPolicy>) {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let data = serde_json::json!({
+        "status": "ok",
+        "version": state.version,
+        "timestamp": now,
+    });
+    json_response(stream, 200, &data, cors);
+}
+
+fn handle_time(stream: &mut TcpStream, cors: Option<CorsPolicy>) {
     let now = chrono::Local::now();
-    let response = TimeResponse {
-        timestamp_ms: now.timestamp_millis(),
-        datetime: now.format("%Y-%m-%d %H:%M:%S").to_string(),
-        timezone: now.format("%:z").to_string(),
-    };
-    HttpResponse::Ok().json(response)
+    let data = serde_json::json!({
+        "timestamp_ms": now.timestamp_millis(),
+        "datetime": now.format("%Y-%m-%d %H:%M:%S").to_string(),
+        "timezone": now.format("%:z").to_string(),
+    });
+    json_response(stream, 200, &data, cors);
 }
 
-/// 获取 NTP 状态
-async fn get_ntp_status(req: HttpRequest, limiter: web::Data<RateLimiter>) -> HttpResponse {
-    if let Some(response) = check_rate_limit(&req, &limiter) {
-        return response;
-    }
-    HttpResponse::Ok().json(serde_json::json!({
-        "status": "ok",
-        "message": "NTP status endpoint"
-    }))
+fn handle_ntp_status(stream: &mut TcpStream, cors: Option<CorsPolicy>) {
+    json_response(
+        stream,
+        200,
+        &serde_json::json!({"status": "ok", "message": "NTP status endpoint"}),
+        cors,
+    );
 }
 
-/// 获取配置
-async fn get_config(
-    req: HttpRequest,
-    state: web::Data<ApiState>,
-    limiter: web::Data<RateLimiter>,
-) -> HttpResponse {
-    if let Some(response) = check_rate_limit(&req, &limiter) {
-        return response;
-    }
-    if !validate_token(&req, &state) {
-        return HttpResponse::Unauthorized().json(serde_json::json!({
-            "error": "Invalid or missing token"
-        }));
-    }
-
-    HttpResponse::Ok().json(serde_json::json!({
-        "message": "配置端点",
-        "config": null
-    }))
+fn handle_status(stream: &mut TcpStream, state: &ApiState, cors: Option<CorsPolicy>) {
+    let status = state.service.status();
+    json_response(
+        stream,
+        200,
+        &serde_json::json!({
+            "running": status.running,
+            "port": status.port,
+            "uptime_seconds": status.uptime_seconds,
+            "version": state.version,
+            "message": status.message,
+        }),
+        cors,
+    );
 }
 
-/// 更新配置
-async fn update_config(
-    req: HttpRequest,
-    body: web::Json<ConfigRequest>,
-    state: web::Data<ApiState>,
-    limiter: web::Data<RateLimiter>,
-) -> HttpResponse {
-    if let Some(response) = check_rate_limit(&req, &limiter) {
-        return response;
-    }
-    if !validate_token(&req, &state) {
-        return HttpResponse::Unauthorized().json(serde_json::json!({
-            "error": "Invalid or missing token"
-        }));
-    }
-
-    info!("Received config update request: {}", body.exam_name);
-    HttpResponse::Ok().json(serde_json::json!({
-        "status": "ok",
-        "message": "配置已更新"
-    }))
+fn handle_get_config(stream: &mut TcpStream, state: &ApiState, cors: Option<CorsPolicy>) {
+    let (config, status) = (
+        state.service.share_runtime.active_config_json(),
+        state.service.share_runtime.last_status(),
+    );
+    json_response(
+        stream,
+        200,
+        &serde_json::json!({
+            "protocol_version": crate::services::share_runtime::SHARE_PROTOCOL_VERSION,
+            "config": config,
+            "status": status,
+        }),
+        cors,
+    );
 }
 
-/// 获取服务状态
-async fn get_status(
-    req: HttpRequest,
-    state: web::Data<ApiState>,
-    limiter: web::Data<RateLimiter>,
-) -> HttpResponse {
-    if let Some(response) = check_rate_limit(&req, &limiter) {
-        return response;
+fn handle_post_config(
+    stream: &mut TcpStream,
+    req: &HttpRequest,
+    state: &ApiState,
+    cors: Option<CorsPolicy>,
+) {
+    if !req.headers.get("content-type").is_some_and(|value| {
+        value
+            .split(';')
+            .next()
+            .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
+    }) {
+        json_response(
+            stream,
+            400,
+            &serde_json::json!({"error":"Content-Type must be application/json"}),
+            cors,
+        );
+        return;
     }
-    let uptime = state.start_time.elapsed().as_secs();
-    let status = ApiStatus {
-        running: true,
-        port: 9527,
-        uptime_seconds: uptime,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    };
-    HttpResponse::Ok().json(status)
+    let runtime = &state.service.share_runtime;
+    let envelope =
+        match serde_json::from_slice::<crate::services::share_runtime::ShareEnvelope>(&req.body) {
+            Ok(envelope) => envelope,
+            Err(_) => {
+                json_response(
+                    stream,
+                    400,
+                    &serde_json::json!({"error":"Invalid share envelope"}),
+                    cors,
+                );
+                return;
+            }
+        };
+    match runtime.receive(envelope) {
+        Ok(crate::services::share_runtime::IncomingShareResult::Pending(summary)) => {
+            json_response(
+                stream,
+                202,
+                &serde_json::json!({
+                    "status":"pending_confirmation",
+                    "share_id": summary.share_id,
+                }),
+                cors,
+            );
+        }
+        Ok(crate::services::share_runtime::IncomingShareResult::AutoAccepted(summary)) => {
+            json_response(
+                stream,
+                202,
+                &serde_json::json!({
+                    "status":"accepted",
+                    "share_id": summary.share_id,
+                }),
+                cors,
+            );
+        }
+        Ok(crate::services::share_runtime::IncomingShareResult::Duplicate) => {
+            json_response(
+                stream,
+                409,
+                &serde_json::json!({"error":"Duplicate share request"}),
+                cors,
+            );
+        }
+        Err(message) => {
+            json_response(stream, 400, &serde_json::json!({"error":message}), cors);
+        }
+    }
 }
 
-/// Swagger/OpenAPI JSON
-async fn swagger_json(req: HttpRequest, limiter: web::Data<RateLimiter>) -> HttpResponse {
-    if let Some(response) = check_rate_limit(&req, &limiter) {
-        return response;
-    }
+fn handle_swagger(stream: &mut TcpStream, state: &ApiState, cors: Option<CorsPolicy>) {
     let swagger = serde_json::json!({
         "openapi": "3.0.0",
         "info": {
             "title": "Aeterna API",
-            "version": env!("CARGO_PKG_VERSION"),
-            "description": "Aeterna - HTTP API 接口文档"
+            "version": state.version,
+            "description": "Aeterna - HTTP API"
         },
-        "servers": [
-            {
-                "url": "http://localhost:9527",
-                "description": "本地服务器"
-            }
-        ],
+        "servers": [{"url": "http://localhost:9527", "description": "本地服务器"}],
         "paths": {
-            "/health": {
-                "get": {
-                    "summary": "健康检查",
-                    "responses": {
-                        "200": {
-                            "description": "服务正常"
-                        }
-                    }
-                }
-            },
-            "/api/time": {
-                "get": {
-                    "summary": "获取当前时间",
-                    "responses": {
-                        "200": {
-                            "description": "当前时间信息"
-                        }
-                    }
-                }
-            },
+            "/health": {"get": {"summary": "健康检查", "responses": {"200": {"description": "服务正常"}}}},
+            "/api/time": {"get": {"summary": "获取当前时间", "responses": {"200": {"description": "当前时间信息"}}}},
             "/api/config": {
-                "get": {
-                    "summary": "获取考试配置",
-                    "security": [{"bearerAuth": []}],
-                    "responses": {
-                        "200": {
-                            "description": "考试配置"
-                        }
-                    }
-                },
-                "post": {
-                    "summary": "更新考试配置",
-                    "security": [{"bearerAuth": []}],
-                    "requestBody": {
-                        "required": true,
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/ConfigRequest"
-                                }
-                            }
-                        }
-                    },
-                    "responses": {
-                        "200": {
-                            "description": "配置已更新"
-                        }
-                    }
-                }
+                "get": {"summary": "获取考试配置", "responses": {"200": {"description": "考试配置"}}},
+                "post": {"summary": "更新考试配置", "responses": {"200": {"description": "配置已更新"}}}
             },
-            "/api/status": {
-                "get": {
-                    "summary": "获取服务状态",
-                    "responses": {
-                        "200": {
-                            "description": "服务状态信息"
-                        }
-                    }
-                }
-            },
-            "/api/ws": {
-                "get": {
-                    "summary": "WebSocket 连接",
-                    "responses": {
-                        "101": {
-                            "description": "WebSocket 升级"
-                        }
-                    }
-                }
-            }
-        },
-        "components": {
-            "securitySchemes": {
-                "bearerAuth": {
-                    "type": "http",
-                    "scheme": "bearer",
-                    "bearerFormat": "JWT"
-                }
-            },
-            "schemas": {
-                "ConfigRequest": {
-                    "type": "object",
-                    "properties": {
-                        "examName": {"type": "string"},
-                        "message": {"type": "string"},
-                        "examInfos": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "start": {"type": "string"},
-                                    "end": {"type": "string"},
-                                    "alertTime": {"type": "integer"}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            "/api/status": {"get": {"summary": "获取服务状态", "responses": {"200": {"description": "服务状态信息"}}}},
+            "/api/ws": {"get": {"summary": "WebSocket（尚未实现）", "responses": {"501": {"description": "尚未实现"}}}}
         }
     });
-
-    HttpResponse::Ok().json(swagger)
+    json_response(stream, 200, &swagger, cors);
 }
 
-/// WebSocket 处理
-async fn ws_handler(
-    req: HttpRequest,
-    stream: web::Payload,
-    limiter: web::Data<RateLimiter>,
-) -> Result<HttpResponse, actix_web::Error> {
-    if check_rate_limit(&req, &limiter).is_some() {
-        return Ok(HttpResponse::TooManyRequests().json(serde_json::json!({
-            "error": "Too Many Requests"
-        })));
-    }
-    let (response, _session, _msg_stream) = actix_ws::handle(&req, stream)?;
-    info!("WebSocket connection established");
-    Ok(response)
+fn handle_ws_unavailable(stream: &mut TcpStream, cors: Option<CorsPolicy>) {
+    json_response(
+        stream,
+        501,
+        &serde_json::json!({"error": "WebSocket is not implemented"}),
+        cors,
+    );
 }
 
 #[cfg(test)]
@@ -625,92 +847,174 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reconfigure_updates_live_auth_and_cors_without_rebinding() {
+        let runtime = default_share_runtime();
+        let service = HttpApiService::with_config_and_runtime(
+            ApiConfig {
+                enabled: true,
+                port: 0,
+                ..ApiConfig::default()
+            },
+            runtime,
+        );
+        service
+            .reconfigure(ApiConfig {
+                enabled: true,
+                port: 0,
+                ..ApiConfig::default()
+            })
+            .unwrap();
+        let port = service.status().port;
+        service
+            .reconfigure(ApiConfig {
+                enabled: true,
+                port,
+                token_auth: true,
+                token: "updated-token".to_string(),
+                allow_cors: true,
+                ..ApiConfig::default()
+            })
+            .unwrap();
+        assert_eq!(service.status().port, port);
+        let config = service.config.lock().unwrap().clone();
+        assert!(config.token_auth && config.allow_cors);
+        assert_eq!(config.token, "updated-token");
+    }
+
+    #[test]
+    fn failed_reconfigure_preserves_existing_listener_and_configuration() {
+        let runtime = default_share_runtime();
+        let service = HttpApiService::with_config_and_runtime(
+            ApiConfig {
+                enabled: true,
+                port: 0,
+                ..ApiConfig::default()
+            },
+            runtime,
+        );
+        service
+            .reconfigure(ApiConfig {
+                enabled: true,
+                port: 0,
+                ..ApiConfig::default()
+            })
+            .unwrap();
+        let original = service.status();
+        assert!(service
+            .reconfigure(ApiConfig {
+                enabled: true,
+                bind_address: "0.0.0.0".to_string(),
+                ..ApiConfig::default()
+            })
+            .is_err());
+        assert_eq!(service.status().port, original.port);
+        assert_eq!(service.config.lock().unwrap().bind_address, "127.0.0.1");
+    }
+
+    #[test]
+    fn cors_policy_is_fixed_and_complete() {
+        let headers = CorsPolicy.headers();
+        assert!(headers.contains("Access-Control-Allow-Origin: *"));
+        assert!(headers.contains("GET, POST, OPTIONS"));
+        assert!(headers.contains("Authorization, Content-Type"));
+    }
+    #[test]
     fn test_api_service_creation() {
         let service = HttpApiService::new();
-        let status = service.status();
-        assert!(status.running);
-        assert_eq!(status.port, 9527);
+        assert!(service.uptime_seconds() < 1);
     }
 
     #[test]
-    fn test_api_service_with_config() {
-        let config = ApiConfig {
-            enabled: false,
-            port: 8080,
-            bind_address: "127.0.0.1".to_string(),
-            token_auth: true,
-            token: "test-token".to_string(),
-            allow_cors: false,
-        };
-        let service = HttpApiService::with_config(config);
-        let status = service.status();
-        assert!(!status.running);
-        assert_eq!(status.port, 8080);
+    fn test_parse_request_rejects_invalid_framing() {
+        let mut request = std::io::Cursor::new(b"GET /\n\n".to_vec());
+        assert!(matches!(
+            parse_request(&mut request, "127.0.0.1".to_string()),
+            Err(RequestParseError::BadRequest)
+        ));
     }
 
     #[test]
-    fn test_health_response_serialization() {
-        let response = HealthResponse {
-            status: "ok".to_string(),
-            version: "1.0.0".to_string(),
-            timestamp: "2025-01-01 00:00:00".to_string(),
-        };
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"status\":\"ok\""));
+    fn test_parse_request_rejects_oversized_body() {
+        let request = format!(
+            "POST /api/config HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            MAX_BODY_BYTES + 1
+        );
+        let mut request = std::io::Cursor::new(request.into_bytes());
+        assert!(matches!(
+            parse_request(&mut request, "127.0.0.1".to_string()),
+            Err(RequestParseError::PayloadTooLarge)
+        ));
     }
 
     #[test]
-    fn test_time_response_serialization() {
-        let response = TimeResponse {
-            timestamp_ms: 1700000000000,
-            datetime: "2025-01-01 00:00:00".to_string(),
-            timezone: "+08:00".to_string(),
-        };
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"timestamp_ms\""));
+    fn test_parse_request_rejects_transfer_encoding() {
+        let mut request = std::io::Cursor::new(
+            b"POST /api/config HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec(),
+        );
+        assert!(matches!(
+            parse_request(&mut request, "127.0.0.1".to_string()),
+            Err(RequestParseError::NotImplemented)
+        ));
     }
 
     #[test]
-    fn test_rate_limiter_default() {
-        let limiter = RateLimiter::default_limiter();
+    fn test_parse_request_reads_exact_body() {
+        let mut request = std::io::Cursor::new(
+            b"POST /api/config HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}".to_vec(),
+        );
+        let parsed = parse_request(&mut request, "127.0.0.1".to_string()).unwrap();
+        assert_eq!(parsed.body, b"{}");
+    }
+
+    #[test]
+    fn test_rate_limiter() {
+        let limiter = RateLimiter::new(2, Duration::from_secs(60));
         assert!(limiter.check("127.0.0.1"));
-        assert_eq!(limiter.remaining("127.0.0.1"), 99);
-    }
-
-    #[test]
-    fn test_rate_limiter_exceeded() {
-        let limiter = RateLimiter::new(2, std::time::Duration::from_secs(60));
-        assert!(limiter.check("127.0.0.1"));
-        assert!(limiter.check("127.0.0.1"));
-        assert!(!limiter.check("127.0.0.1")); // third request should be blocked
-        assert_eq!(limiter.remaining("127.0.0.1"), 0);
-    }
-
-    #[test]
-    fn test_rate_limiter_multiple_ips() {
-        let limiter = RateLimiter::new(1, std::time::Duration::from_secs(60));
-        assert!(limiter.check("192.168.1.1"));
-        assert!(limiter.check("192.168.1.2"));
-        assert!(!limiter.check("192.168.1.1"));
-        assert!(limiter.check("192.168.1.3"));
-    }
-
-    #[test]
-    fn test_rate_limiter_reset() {
-        let limiter = RateLimiter::new(1, std::time::Duration::from_secs(60));
         assert!(limiter.check("127.0.0.1"));
         assert!(!limiter.check("127.0.0.1"));
-        limiter.reset("127.0.0.1");
-        assert!(limiter.check("127.0.0.1"));
     }
 
     #[test]
-    fn test_rate_limiter_reset_all() {
-        let limiter = RateLimiter::new(1, std::time::Duration::from_secs(60));
-        assert!(limiter.check("127.0.0.1"));
-        assert!(limiter.check("192.168.1.1"));
-        limiter.reset_all();
-        assert!(limiter.check("127.0.0.1"));
-        assert!(limiter.check("192.168.1.1"));
+    fn test_rate_limiter_multi_ip() {
+        let limiter = RateLimiter::new(1, Duration::from_secs(60));
+        assert!(limiter.check("a"));
+        assert!(limiter.check("b"));
+        assert!(!limiter.check("a"));
+    }
+
+    #[test]
+    fn test_api_config_default() {
+        let cfg = ApiConfig::default();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.port, 9527);
+        assert_eq!(cfg.bind_address, "127.0.0.1");
+        assert!(!cfg.allow_cors);
+    }
+
+    #[test]
+    fn test_resolve_bind_address_requires_token_for_lan() {
+        let config = ApiConfig {
+            bind_address: "0.0.0.0".to_string(),
+            ..ApiConfig::default()
+        };
+        assert!(resolve_bind_address(&config).is_err());
+    }
+
+    #[test]
+    fn test_resolve_bind_address_supports_ipv6_loopback() {
+        let config = ApiConfig {
+            bind_address: "::1".to_string(),
+            ..ApiConfig::default()
+        };
+        assert!(resolve_bind_address(&config).unwrap().ip().is_loopback());
+    }
+
+    #[test]
+    fn test_resolve_bind_address_rejects_empty_authenticated_token() {
+        let config = ApiConfig {
+            token_auth: true,
+            ..ApiConfig::default()
+        };
+        assert!(resolve_bind_address(&config).is_err());
     }
 }

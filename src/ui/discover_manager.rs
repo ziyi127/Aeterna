@@ -1,7 +1,7 @@
 use qmetaobject::*;
 use std::sync::Mutex;
 
-/// 设备发现管理器 - 暴露给 QML 的 mDNS 扫描接口
+/// QML adapter for the process-wide mDNS discovery service.
 #[derive(QObject, Default)]
 pub struct DiscoverManager {
     base: qt_base_class!(trait QObject),
@@ -27,43 +27,50 @@ impl DiscoverManager {
     }
 
     fn devices_json(&self) -> QString {
-        let json = self._devices_json.lock().unwrap();
-        QString::from(json.clone())
+        QString::from(self._devices_json.lock().unwrap().clone())
     }
 
     fn device_count(&self) -> i32 {
-        let json = self._devices_json.lock().unwrap();
-        if json.is_empty() || json.as_str() == "[]" {
-            0
-        } else {
-            serde_json::from_str::<Vec<serde_json::Value>>(&json)
-                .map(|arr| arr.len() as i32)
-                .unwrap_or(0)
-        }
+        serde_json::from_str::<Vec<serde_json::Value>>(&self._devices_json.lock().unwrap())
+            .map(|devices| devices.len() as i32)
+            .unwrap_or(0)
     }
 
     fn start_scan(&self) {
         *self._scanning.lock().unwrap() = true;
         self.scanning_changed();
-        ::log::info!("DiscoverManager: scan started");
+        self.refresh_devices();
     }
 
     fn stop_scan(&self) {
         *self._scanning.lock().unwrap() = false;
         self.scanning_changed();
-        ::log::info!("DiscoverManager: scan stopped");
     }
 
     fn refresh_devices(&self) {
-        let mut json_guard = self._devices_json.lock().unwrap();
-        let is_empty = json_guard.is_empty() || json_guard.as_str() == "[]";
-        if is_empty {
-            *json_guard = r#"[
-                {"name":"Aeterna 播放器 (192.168.1.100)","type":"player","status":"在线"},
-                {"name":"Aeterna 编辑器 (192.168.1.101)","type":"editor","status":"在线"}
-            ]"#
-            .to_string();
-        }
+        #[cfg(feature = "cast")]
+        let devices = crate::services::share_runtime::global()
+            .map(|runtime| runtime.cast_service().get_devices())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|device| {
+                serde_json::json!({
+                    "id": device.id,
+                    "name": device.name,
+                    "endpoint": format!("{}:{}", device.ip_address, device.port),
+                    "type": device.properties.get("type").cloned().unwrap_or_else(|| "player".to_string()),
+                    "share_supported": device.supports_config_share(),
+                    "status": if device.supports_config_share() { "可分享" } else { "不可分享" },
+                    "last_seen_seconds": device.last_seen.elapsed().as_secs(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        #[cfg(not(feature = "cast"))]
+        let devices: Vec<serde_json::Value> = Vec::new();
+
+        *self._devices_json.lock().unwrap() =
+            serde_json::to_string(&devices).unwrap_or_else(|_| "[]".to_string());
         self.devices_json_changed();
         self.device_count_changed();
     }

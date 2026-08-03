@@ -49,7 +49,7 @@ Item {
         radius: root.radius
         border.width: root.bordered ? 1 : 0
         color: {
-            if (root.liquidGlass) return Theme.glassRegular
+            if (root.liquidGlass) return Theme.reduceTransparency ? Theme.surfaceRaised : Theme.glassRegular
             switch (root.tier) {
                 case 0: return Theme.materialBase
                 case 1: return Theme.materialElevated
@@ -58,8 +58,8 @@ Item {
                 default: return Theme.materialBase
             }
         }
-        border.color: root.liquidGlass ? Theme.glassBorder : Theme.hairline
-        opacity: root.liquidGlass ? Theme.glassOpacity : 1.0
+        border.color: root.liquidGlass && !(Theme.highContrast || Theme.reduceTransparency) ? Theme.glassBorder : Theme.hairline
+        opacity: root.liquidGlass && !(Theme.highContrast || Theme.reduceTransparency) ? Theme.glassOpacity : 1.0
 
         Behavior on color {
             ColorAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
@@ -68,7 +68,7 @@ Item {
         // A restrained highlight gives the navigation layer a glass edge
         // without introducing expensive blur effects across the content tree.
         Rectangle {
-            visible: root.liquidGlass && !Theme.highContrast
+            visible: root.liquidGlass && !(Theme.highContrast || Theme.reduceTransparency)
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top

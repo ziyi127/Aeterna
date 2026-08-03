@@ -21,10 +21,11 @@ ApplicationWindow {
     // 内部 SettingsBackend 作为回退；外部可通过属性注入共享实例
     SettingsBackend { id: internalSettingsBackend }
     property QtObject settingsBackend: null
+    property bool trayIconAvailable: false
 
     property string initialCategory: "basic"
 
-    // ── Local settings state (persisted in-memory for the session) ──
+    property bool isHydrating: false
     property var settings: ({
         // Basic
         autoStart: false,
@@ -41,17 +42,21 @@ ApplicationWindow {
         // HTTP API
         httpEnabled: true,
         httpPort: 9527,
-        httpBind: "0.0.0.0",
+        httpBind: "127.0.0.1",
         tokenAuth: false,
-        apiToken: "••••••••",
-        corsEnabled: true,
+        apiToken: "",
+        corsEnabled: false,
         // Cast
         mdnsEnabled: true,
-        allowDiscovery: true,
+        advertiseOnLan: true,
         deviceName: "Aeterna-001",
         allowRemoteControl: false,
         autoAcceptCast: false,
-        showStatusBar: true
+        showStatusBar: true,
+        // Accessibility appearance
+        reduceTransparency: false,
+        highContrast: false,
+        reducedMotion: false
     })
 
     // ── Responsive layout helpers ──
@@ -77,76 +82,76 @@ ApplicationWindow {
         }
     }
 
+    function hydrateFromBackend() {
+        if (!settingsBackend || settingsBackend.settings_json === "") return
+        try {
+            var saved = JSON.parse(settingsBackend.settings_json)
+            isHydrating = true
+            settings = {
+                autoStart: saved.basic.auto_start,
+                minimizeToTray: saved.basic.minimize_to_tray,
+                autoLoadLastConfig: saved.basic.auto_load_last,
+                configDir: saved.basic.config_dir,
+                fullscreenByDefault: saved.player.default_fullscreen,
+                disableSystemShortcuts: saved.player.disable_shortcuts,
+                showGradientBg: saved.player.show_gradient_bg,
+                autoHideControls: saved.player.auto_hide_toolbar,
+                uiAccessEnabled: saved.player.ui_access_enabled,
+                clockStyle: saved.player.clock_style,
+                httpEnabled: saved.http_api.enabled,
+                httpPort: saved.http_api.port,
+                httpBind: saved.http_api.bind_address,
+                tokenAuth: saved.http_api.token_auth,
+                apiToken: saved.http_api.token,
+                corsEnabled: saved.http_api.allow_cors,
+                mdnsEnabled: saved.cast.mdns_enabled,
+                advertiseOnLan: saved.cast.advertise_on_lan,
+                deviceName: saved.cast.device_name,
+                allowRemoteControl: saved.cast.allow_remote_control,
+                autoAcceptCast: saved.cast.auto_accept,
+                showStatusBar: saved.cast.show_status_bar,
+                reduceTransparency: saved.appearance.reduce_transparency === true,
+                highContrast: saved.appearance.high_contrast === true,
+                reducedMotion: saved.appearance.reduced_motion === true
+            }
+            isHydrating = false
+        } catch (e) {
+            isHydrating = false
+            console.warn("Settings: failed to load persisted values:", e)
+        }
+    }
+
     // ── Persist local settings to backend ──
     function syncToBackend() {
-        if (!settingsBackend) return
+        if (isHydrating || !settingsBackend) return
         var s = settingsWindow.settings
         try {
-            var json = JSON.stringify({
-            version: "2.0.0",
-            basic: {
-                auto_start: s.autoStart,
-                minimize_to_tray: s.minimizeToTray,
-                auto_load_last: s.autoLoadLastConfig,
-                config_dir: s.configDir
-            },
-            appearance: {
-                theme: "dark",
-                theme_mode: settingsBackend.theme_mode,
-                custom_primary_color: settingsBackend.custom_primary_color,
-                body_font: "DM Sans",
-                number_font: "DM Sans",
-                font_size: 14
-            },
-            player: {
-                default_fullscreen: s.fullscreenByDefault,
-                disable_shortcuts: s.disableSystemShortcuts,
-                show_gradient_bg: s.showGradientBg,
-                auto_hide_toolbar: s.autoHideControls,
-                clock_style: "digital",
-                show_seconds: settingsBackend.show_seconds,
-                show_date: settingsBackend.show_date,
-                primary_color: "",
-                bg_color: "",
-                ui_scale: 1.0,
-                density: "comfortable",
-                big_clock: false,
-                large_info_font: false,
-                room_number: "",
-                ntp_enabled: false,
-                ui_access_enabled: settingsBackend.ui_access_enabled,
-                exit_password_enabled: settingsBackend.exit_password_enabled,
-                exit_password: settingsBackend.exit_password
-            },
-            editor: {
-                recent_files: [],
-                auto_save: false,
-                default_path: s.configDir
-            },
-            time: {
-                ntp_servers: ["ntp.aliyun.com", "pool.ntp.org"],
-                auto_sync: settingsBackend.ntp_auto_sync,
-                periodic_sync: settingsBackend.ntp_periodic_sync,
-                sync_interval_minutes: settingsBackend.ntp_sync_interval_minutes
-            },
-            http_api: {
-                enabled: s.httpEnabled,
-                port: s.httpPort,
-                bind_address: s.httpBind,
-                token_auth: s.tokenAuth,
-                token: s.apiToken,
-                allow_cors: s.corsEnabled
-            },
-            cast: {
-                enabled: s.mdnsEnabled,
-                allow_discovery: s.allowDiscovery,
-                device_name: s.deviceName,
-                allow_remote_control: s.allowRemoteControl,
-                auto_accept: s.autoAcceptCast,
-                show_status_bar: s.showStatusBar
-            }
-        })
-        settingsBackend.update_settings(json)
+            var saved = JSON.parse(settingsBackend.settings_json)
+            saved.basic.auto_start = s.autoStart
+            saved.basic.minimize_to_tray = s.minimizeToTray
+            saved.basic.auto_load_last = s.autoLoadLastConfig
+            saved.basic.config_dir = s.configDir
+            saved.player.default_fullscreen = s.fullscreenByDefault
+            saved.player.disable_shortcuts = s.disableSystemShortcuts
+            saved.player.show_gradient_bg = s.showGradientBg
+            saved.player.auto_hide_toolbar = s.autoHideControls
+            saved.player.clock_style = s.clockStyle === "数字时钟" ? "digital" : s.clockStyle
+            saved.http_api.enabled = s.httpEnabled
+            saved.http_api.port = s.httpPort
+            saved.http_api.bind_address = s.httpBind
+            saved.http_api.token_auth = s.tokenAuth
+            saved.http_api.token = s.apiToken
+            saved.http_api.allow_cors = s.corsEnabled
+            saved.cast.mdns_enabled = s.mdnsEnabled
+            saved.cast.advertise_on_lan = s.advertiseOnLan
+            saved.cast.device_name = s.deviceName
+            saved.cast.allow_remote_control = s.allowRemoteControl
+            saved.cast.auto_accept = s.autoAcceptCast
+            saved.cast.show_status_bar = s.showStatusBar
+            saved.appearance.reduce_transparency = s.reduceTransparency
+            saved.appearance.high_contrast = s.highContrast
+            saved.appearance.reduced_motion = s.reducedMotion
+            settingsBackend.update_settings(JSON.stringify(saved))
         } catch (e) {
             console.warn("Settings: failed to serialize settings:", e)
         }
@@ -160,13 +165,12 @@ ApplicationWindow {
         spacing: 0
 
         // ── Sidebar ──
-        Material {
+        GlassSurface {
             Layout.preferredWidth: settingsWindow.sidebarWidth
             Layout.fillHeight: true
-            tier: Material.Elevated
+            variant: GlassSurface.Navigation
             radius: 0
             bordered: true
-            liquidGlass: true
 
             Rectangle {
                 anchors.right: parent.right
@@ -250,12 +254,25 @@ ApplicationWindow {
                                     }
                                 }
                                 PinguoCheckBox {
-                                    text: "启动后最小化到系统托盘"
+                                    text: "关闭窗口时最小化到系统托盘"
                                     checked: settingsWindow.settings.minimizeToTray
+                                    enabled: trayIconAvailable
+                                    accessibleDescription: trayIconAvailable
+                                                           ? "关闭主窗口时保留应用在系统托盘中"
+                                                           : "当前桌面环境未提供系统托盘；关闭窗口将退出程序。"
                                     onToggled: {
                                         settingsWindow.settings.minimizeToTray = checked
                                         settingsWindow.syncToBackend()
                                     }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: !trayIconAvailable
+                                    text: "当前桌面环境未提供系统托盘；关闭窗口将退出程序。"
+                                    color: Theme.warning
+                                    font.pixelSize: Theme.typeFootnote
+                                    font.family: Theme.fontSans
+                                    wrapMode: Text.WordWrap
                                 }
                                 PinguoCheckBox {
                                     text: "启动时自动加载上次配置"
@@ -446,6 +463,55 @@ ApplicationWindow {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: settingsBackend.theme_mode = "light"
+                                    }
+                                }
+                            }
+                        }
+                        Card {
+                            Layout.fillWidth: true
+                            title: "视觉与辅助功能"
+                            contentItem: ColumnLayout {
+                                spacing: Theme.spacing12
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "这些选项会即时预览，并在所有窗口中保持一致。"
+                                    color: Theme.mutedForeground
+                                    font.pixelSize: Theme.typeFootnote
+                                    font.family: Theme.fontSans
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                PinguoCheckBox {
+                                    Layout.fillWidth: true
+                                    text: "减少透明效果"
+                                    checked: settingsWindow.settings.reduceTransparency
+                                    accessibleDescription: "将玻璃材质替换为稳定的实色表面"
+                                    onToggled: {
+                                        settingsWindow.settings.reduceTransparency = checked
+                                        settingsWindow.syncToBackend()
+                                    }
+                                }
+
+                                PinguoCheckBox {
+                                    Layout.fillWidth: true
+                                    text: "提高对比度"
+                                    checked: settingsWindow.settings.highContrast
+                                    accessibleDescription: "增强文字、边框和表面的可读性"
+                                    onToggled: {
+                                        settingsWindow.settings.highContrast = checked
+                                        settingsWindow.syncToBackend()
+                                    }
+                                }
+
+                                PinguoCheckBox {
+                                    Layout.fillWidth: true
+                                    text: "减少动态效果"
+                                    checked: settingsWindow.settings.reducedMotion
+                                    accessibleDescription: "停用非必要的界面过渡动画"
+                                    onToggled: {
+                                        settingsWindow.settings.reducedMotion = checked
+                                        settingsWindow.syncToBackend()
                                     }
                                 }
                             }
@@ -936,19 +1002,6 @@ ApplicationWindow {
                                             settingsWindow.syncToBackend(); console.log("Settings: apiToken updated")
                                         }
                                     }
-                                    PinguoButton {
-                                        text: "重新生成"
-                                        variant: PinguoButton.Secondary
-                                        onClicked: {
-                                            var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-                                            var token = ""
-                                            for (var i = 0; i < 32; i++) {
-                                                token += chars.charAt(Math.floor(Math.random() * chars.length))
-                                            }
-                                            settingsWindow.settings.apiToken = token
-                                            settingsWindow.syncToBackend(); console.log("Settings: regenerated apiToken")
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -1002,7 +1055,7 @@ ApplicationWindow {
                             contentItem: ColumnLayout {
                                 spacing: Theme.spacing12
                                 PinguoCheckBox { text: "启用 mDNS 设备发现"; checked: settingsWindow.settings.mdnsEnabled; onToggled: { settingsWindow.settings.mdnsEnabled = checked; settingsWindow.syncToBackend(); console.log("Settings: mdnsEnabled =", checked) } }
-                                PinguoCheckBox { text: "允许被发现"; checked: settingsWindow.settings.allowDiscovery; onToggled: { settingsWindow.settings.allowDiscovery = checked; settingsWindow.syncToBackend(); console.log("Settings: allowDiscovery =", checked) } }
+                                PinguoCheckBox { text: "在局域网中公布此设备"; checked: settingsWindow.settings.advertiseOnLan; enabled: settingsWindow.settings.mdnsEnabled; onToggled: { settingsWindow.settings.advertiseOnLan = checked; settingsWindow.syncToBackend(); console.log("Settings: advertiseOnLan =", checked) } }
                                 RowLayout {
                                     spacing: Theme.spacing12
                                     Text { text: "设备名称:"; color: Theme.foreground; font.pixelSize: Theme.typeSubhead; font.family: Theme.fontSans }
@@ -1016,7 +1069,7 @@ ApplicationWindow {
                             title: "投屏选项"
                             contentItem: ColumnLayout {
                                 spacing: Theme.spacing12
-                                PinguoCheckBox { text: "允许远程控制"; checked: settingsWindow.settings.allowRemoteControl; onToggled: { settingsWindow.settings.allowRemoteControl = checked; settingsWindow.syncToBackend(); console.log("Settings: allowRemoteControl =", checked) } }
+                                PinguoCheckBox { text: "允许接收和自动分享配置（需要局域网监听与共享 Token）"; checked: settingsWindow.settings.allowRemoteControl; onToggled: { settingsWindow.settings.allowRemoteControl = checked; settingsWindow.syncToBackend(); console.log("Settings: allowRemoteControl =", checked) } }
                                 PinguoCheckBox { text: "自动接受投屏请求"; checked: settingsWindow.settings.autoAcceptCast; onToggled: { settingsWindow.settings.autoAcceptCast = checked; settingsWindow.syncToBackend(); console.log("Settings: autoAcceptCast =", checked) } }
                                 PinguoCheckBox { text: "投屏时显示状态栏"; checked: settingsWindow.settings.showStatusBar; onToggled: { settingsWindow.settings.showStatusBar = checked; settingsWindow.syncToBackend(); console.log("Settings: showStatusBar =", checked) } }
                             }
@@ -1133,6 +1186,7 @@ ApplicationWindow {
         }
         // 加载设置
         settingsBackend.load()
+        settingsWindow.hydrateFromBackend()
         // 同步自定义颜色到 Hex 输入框
         hexInput.text = settingsBackend.custom_primary_color
         // 导航到初始分类

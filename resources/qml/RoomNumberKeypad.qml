@@ -25,14 +25,45 @@ Item {
     property string currentNumber: ""
     property string title: "输入考场号"
 
+    activeFocusOnTab: visible
+    Accessible.role: Accessible.Dialog
+    Accessible.name: root.title
+    Accessible.description: "使用数字键输入，Enter 确认，Escape 取消"
+
     signal confirmed(string number)
     signal canceled()
 
     
 
-    Material {
+    onVisibleChanged: {
+        if (visible)
+            forceActiveFocus()
+    }
+
+    Keys.onPressed: {
+        if (!root.visible)
+            return
+        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
+            if (root.currentNumber.length < 6)
+                root.currentNumber += String(event.key - Qt.Key_0)
+            event.accepted = true
+        } else if (event.key === Qt.Key_Backspace) {
+            root.currentNumber = root.currentNumber.slice(0, -1)
+            event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            root.confirmed(root.currentNumber)
+            root.visible = false
+            event.accepted = true
+        } else if (event.key === Qt.Key_Escape) {
+            root.canceled()
+            root.visible = false
+            event.accepted = true
+        }
+    }
+
+    GlassSurface {
         anchors.fill: parent
-        tier: Material.Overlay
+        variant: GlassSurface.Popover
         radius: Theme.radiusLarge
     }
 
@@ -54,7 +85,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 56
-            color: Theme.accent
+            color: Theme.highContrast ? Theme.hcBackground : Theme.accent
             radius: Theme.radiusMedium
             border.width: 1
             border.color: Theme.hairline
@@ -64,7 +95,7 @@ Item {
                 anchors.fill: parent
                 anchors.margins: Theme.spacing12
                 text: root.currentNumber
-                color: Theme.foreground
+                color: Theme.highContrast ? Theme.hcForeground : Theme.foreground
                 font.pixelSize: Theme.typeTitle1
                 font.family: Theme.fontSans
                 font.weight: Theme.weightBold

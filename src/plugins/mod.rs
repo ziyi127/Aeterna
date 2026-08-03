@@ -9,7 +9,8 @@
 use crate::core::utils::aeterna_config_dir;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 /// 已注册的菜单项
@@ -348,6 +349,92 @@ pub struct PluginStoreEntry {
     pub compatible_version: String,
 }
 
+/// Read-only inventory result for local plugin manifests. Discovery never loads,
+/// executes, installs, removes, or creates plugin directories.
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryResult {
+    pub plugins: Vec<InstalledPlugin>,
+    pub diagnostics: Vec<String>,
+}
+
+pub fn default_plugin_dir() -> PathBuf {
+    aeterna_config_dir().join("plugins")
+}
+
+pub fn discover_default() -> DiscoveryResult {
+    discover_from_root(&default_plugin_dir())
+}
+
+pub fn discover_from_root(root: &Path) -> DiscoveryResult {
+    let mut result = DiscoveryResult::default();
+    if !root.exists() {
+        return result;
+    }
+
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("无法读取插件目录: {}", error));
+            return result;
+        }
+    };
+
+    let mut candidates = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|entry| entry.file_name());
+
+    let mut discovered = BTreeMap::<String, InstalledPlugin>::new();
+    for entry in candidates {
+        let manifest_path = entry.path().join("manifest.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&manifest_path) {
+            Ok(content) => content,
+            Err(error) => {
+                result
+                    .diagnostics
+                    .push(format!("无法读取 {}: {}", manifest_path.display(), error));
+                continue;
+            }
+        };
+        let manifest = match PluginManager::parse_manifest(&content) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                result
+                    .diagnostics
+                    .push(format!("{}: {}", manifest_path.display(), error));
+                continue;
+            }
+        };
+        let name = manifest.name.clone();
+        let plugin = InstalledPlugin {
+            manifest,
+            state: PluginState::Installed,
+            path: entry.path().to_string_lossy().to_string(),
+            installed_at: String::new(),
+        };
+        match discovered.entry(name) {
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                result.diagnostics.push(format!(
+                    "发现重复插件清单 '{}'; 保留排序靠前的目录",
+                    entry.key()
+                ));
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(plugin);
+            }
+        }
+    }
+
+    result.plugins = discovered.into_values().collect();
+    result
+}
+
 /// 插件管理器
 pub struct PluginManager {
     plugins: Mutex<HashMap<String, InstalledPlugin>>,
@@ -550,6 +637,20 @@ impl Default for PluginManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_of_missing_directory_is_empty_and_read_only() {
+        let root = std::env::temp_dir().join(format!(
+            "aeterna-plugin-discovery-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let result = discover_from_root(&root);
+        assert!(result.plugins.is_empty());
+        assert!(result.diagnostics.is_empty());
+        assert!(!root.exists());
+    }
 
     #[test]
     fn test_plugin_manager_creation() {

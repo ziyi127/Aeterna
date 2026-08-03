@@ -85,16 +85,8 @@ ApplicationWindow {
         }
     }
 
-    Timer {
-        id: topmostEnforcer
-        interval: 500
-        running: playerWindow.visibility === Window.FullScreen
-        repeat: true
-        onTriggered: {
-            playerWindow.raise()
-            playerWindow.requestActivate()
-        }
-    }
+    // Keep fullscreen as a deliberate presentation state. Repeated activation
+    // steals focus from window-manager and accessibility surfaces.
 
     // ═══════════════════════════════════════════════════════════════
     // Backend sync / public API
@@ -152,12 +144,19 @@ ApplicationWindow {
         }
     }
 
+    function openRoomKeypad() {
+        exitPasswordKeypad.visible = false
+        roomKeypad.currentNumber = roomNumberLabel.text
+        roomKeypad.visible = true
+    }
+
     function requestExit() {
         if (__exitCooldownSeconds > 0) {
             alertOverlay.show("warning", "退出冷却中", "请等待 " + __exitCooldownSeconds + " 秒后再试")
             return
         }
         if (playerBackend.exitPasswordEnabled) {
+            roomKeypad.visible = false
             exitPasswordKeypad.currentNumber = ""
             exitPasswordKeypad.visible = true
         } else {
@@ -254,7 +253,19 @@ ApplicationWindow {
                 return
             }
             if (event.key === Qt.Key_Escape) {
-                requestExit()
+                if (exitConfirmDialog.visible) {
+                    exitConfirmDialog.close()
+                } else if (exitPasswordKeypad.visible) {
+                    exitPasswordKeypad.canceled()
+                } else if (roomKeypad.visible) {
+                    roomKeypad.canceled()
+                } else if (alertOverlay.visible && alertOverlay.canDismiss) {
+                    alertOverlay.hide()
+                } else if (settingsDrawer.visible) {
+                    settingsDrawer.visible = false
+                } else {
+                    requestExit()
+                }
                 event.accepted = true
                 return
             }
@@ -314,10 +325,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        roomKeypad.currentNumber = roomNumberLabel.text
-                        roomKeypad.visible = true
-                    }
+                    onClicked: playerWindow.openRoomKeypad()
                 }
             }
         }
@@ -770,7 +778,7 @@ ApplicationWindow {
         // Backdrop shield for settings drawer
         Rectangle {
             anchors.fill: parent
-            color: Qt.alpha(Theme.foreground, 0.2)
+            color: Theme.glassScrim
             visible: settingsDrawer.visible
             z: 150
 
@@ -819,7 +827,7 @@ ApplicationWindow {
         // Backdrop shield for room number keypad
         Rectangle {
             anchors.fill: parent
-            color: Qt.alpha(Theme.foreground, 0.2)
+            color: Theme.glassScrim
             visible: roomKeypad.visible
             z: 199
 
@@ -832,7 +840,7 @@ ApplicationWindow {
         // Backdrop shield for exit password keypad
         Rectangle {
             anchors.fill: parent
-            color: Qt.alpha(Theme.foreground, 0.2)
+            color: Theme.glassScrim
             visible: exitPasswordKeypad.visible
             z: 199
 

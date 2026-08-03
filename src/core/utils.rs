@@ -1,22 +1,134 @@
 use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone};
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 /// 获取 Aeterna 配置目录路径。
 ///
-/// 优先使用 `dirs::config_dir()/Aeterna`，失败时回退到当前目录。
+/// 优先使用 `dirs::config_dir()/Aeterna`，无法获取平台目录时回退到临时目录，
+/// 避免在应用安装目录或不可预测的当前目录中写入用户数据。
 pub fn aeterna_config_dir() -> PathBuf {
     dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .or_else(|| Some(std::env::temp_dir()))
+        .unwrap_or_else(std::env::temp_dir)
         .join("Aeterna")
 }
 
-/// 剥离 `file://` 前缀，返回原始文件路径。
+/// Replace a UTF-8 file using an adjacent temporary file.
 ///
-/// 用于处理 QML 侧传入的 URL 格式路径。
-pub fn strip_file_prefix(path: &str) -> String {
-    path.strip_prefix("file://")
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| path.to_string())
+/// The rename is atomic on platforms that allow replacing an existing file.
+/// Windows requires a remove-and-retry fallback because the standard library
+/// does not expose an atomic replace primitive there.
+pub fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path has no parent directory",
+        )
+    })?;
+    std::fs::create_dir_all(parent)?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+        })?;
+    let temporary = parent.join(format!(".{}.{}.tmp", file_name, std::process::id()));
+    let write_result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&temporary)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+
+        // Do not remove the old file as a replacement fallback. On Windows,
+        // `rename` may reject replacing an open destination; returning that
+        // error preserves the previously valid settings instead of risking a
+        // missing file if a second rename fails.
+        std::fs::rename(&temporary, path)
+    })();
+
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    write_result
+}
+
+/// Convert a QML file URL or a native path into a filesystem path.
+///
+/// QML file dialogs provide `file:` URLs while existing callers may pass a
+/// native path. URL decoding happens exactly once at this boundary.
+pub fn qml_file_input_to_path(input: &str) -> Result<PathBuf, String> {
+    if !input.contains("://") && !input.starts_with("file:") {
+        return Ok(PathBuf::from(input));
+    }
+    let rest = input
+        .strip_prefix("file:")
+        .ok_or_else(|| "只支持本地 file URL".to_string())?;
+    if rest.contains('?') || rest.contains('#') {
+        return Err("file URL 中的路径必须编码 ? 和 #".to_string());
+    }
+
+    let (authority, encoded_path) = if let Some(rest) = rest.strip_prefix("//") {
+        match rest.find('/') {
+            Some(index) => (&rest[..index], &rest[index..]),
+            None => (rest, ""),
+        }
+    } else {
+        ("", rest)
+    };
+    let decoded = percent_decode_path(encoded_path)?;
+
+    #[cfg(windows)]
+    {
+        if !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost") {
+            return Ok(PathBuf::from(format!(
+                r"\\{}{}",
+                authority,
+                decoded.replace('/', r"\")
+            )));
+        }
+        let path = decoded.strip_prefix('/').unwrap_or(&decoded);
+        return Ok(PathBuf::from(path));
+    }
+    #[cfg(not(windows))]
+    {
+        if !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost") {
+            return Err("当前平台不支持 file URL 网络主机".to_string());
+        }
+        Ok(PathBuf::from(decoded))
+    }
+}
+
+fn percent_decode_path(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err("file URL 包含不完整的百分号编码".to_string());
+            }
+            let high = hex_value(bytes[index + 1])
+                .ok_or_else(|| "file URL 包含无效百分号编码".to_string())?;
+            let low = hex_value(bytes[index + 2])
+                .ok_or_else(|| "file URL 包含无效百分号编码".to_string())?;
+            decoded.push(high << 4 | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).map_err(|_| "file URL 不是有效 UTF-8 路径".to_string())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// 将 DateTime 对象格式化为本地时间字符串。
@@ -159,6 +271,39 @@ pub fn add_minutes_to_datetime(start: &str, minutes: i64) -> Option<String> {
 mod tests {
     use super::*;
     use chrono::Local;
+
+    #[test]
+    fn test_qml_file_input_to_path_decodes_file_url() {
+        assert_eq!(
+            qml_file_input_to_path("file:///tmp/Exam%20%E6%B5%8B%E8%AF%95.json").unwrap(),
+            PathBuf::from("/tmp/Exam 测试.json")
+        );
+    }
+
+    #[test]
+    fn test_qml_file_input_to_path_rejects_invalid_url_encoding() {
+        assert!(qml_file_input_to_path("file:///tmp/%ZZ.json").is_err());
+        assert!(qml_file_input_to_path("https://example.test/config.json").is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_qml_file_input_to_path_rejects_remote_authority() {
+        assert!(qml_file_input_to_path("file://server/share/config.json").is_err());
+    }
+
+    #[test]
+    fn test_atomic_write_replaces_existing_content() {
+        let path = std::env::temp_dir().join(format!(
+            "aeterna-atomic-write-{}-{}.json",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(&path, "old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn test_format_local_date_time() {

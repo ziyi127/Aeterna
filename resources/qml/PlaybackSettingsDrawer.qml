@@ -41,6 +41,22 @@ Item {
 
 
 
+    activeFocusOnTab: visible
+    Accessible.role: Accessible.Dialog
+    Accessible.name: "播放设置"
+
+    function close() {
+        if (visible)
+            visible = false
+    }
+
+    Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Escape && root.visible) {
+            root.close()
+            event.accepted = true
+        }
+    }
+
     Behavior on x {
         NumberAnimation {
             duration: Theme.motionMedium
@@ -48,9 +64,9 @@ Item {
         }
     }
 
-    Material {
+    GlassSurface {
         anchors.fill: parent
-        tier: Material.Overlay
+        variant: GlassSurface.Drawer
         radius: 0 // drawer is edge-to-edge on the right; 0 is intentional
     }
 
@@ -73,8 +89,8 @@ Item {
             }
 
             Rectangle {
-                width: 32
-                height: 32
+                Layout.preferredWidth: 32
+                Layout.preferredHeight: 32
                 radius: Theme.radiusMedium
                 color: closeMouse.containsMouse
                     ? Qt.alpha(Theme.foreground, 0.08)
@@ -99,7 +115,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.visible = false
+                    onClicked: root.close()
                 }
             }
         }
@@ -310,10 +326,12 @@ Item {
 
     onVisibleChanged: {
         if (visible) {
+            closeTimer.stop()
             root.__wasVisible = true
+            forceActiveFocus()
         } else if (root.__wasVisible) {
             root.__wasVisible = false
-            closeTimer.start()
+            closeTimer.restart()
         }
     }
 

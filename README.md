@@ -24,10 +24,11 @@
 
 ## 使用前准备
 
-1. 从 [Releases](https://github.com/ziyi127/Aeterna/releases) 下载与你的系统对应的文件。
-2. 解压后运行 Aeterna。Linux 便携包已包含 Qt 运行时；Windows 运行 `aeterna.exe`；macOS 打开 `aeterna.app`。
-3. 在首页选择“新建/编辑日程”，填写考试信息并保存为 JSON。
-4. 载入日程后打开播放器。开始前请核对系统时间，必要时在设置中进行 NTP 校时。
+1. 从 [Releases](https://github.com/ziyi127/Aeterna/releases) 下载与你的系统对应的 **portable** 压缩包（推荐）。它包含 Qt 运行时、插件和 QML 模块。
+2. 解压后运行 Aeterna：Linux 运行 `bin/aeterna`，Windows 运行 `aeterna.exe`，macOS 打开 `aeterna.app`。
+3. 高级用户也可选择 **bare** 压缩包；它仅包含可执行文件，需自行安装 ABI 兼容的 Qt 6 运行时和对应的 QML/platform 插件。
+4. 在首页选择“新建/编辑日程”，填写考试信息并保存为 JSON。
+5. 载入日程后打开播放器。开始前请核对系统时间，必要时在设置中进行 NTP 校时。
 
 > 请在正式考试开始前，用一份测试日程完整演练一次提醒、全屏显示和退出密码流程。
 
@@ -95,7 +96,15 @@ resources/qml/  界面与设计系统
 
 ## 版本与发布
 
-当前正式版本为 **v2.0.0**。推送形如 `v2.0.0` 的标签会自动执行质量检查、构建 Linux/Windows/macOS 安装包、生成 SHA-256 校验和，并创建 GitHub Release。标签版本必须与 `Cargo.toml` 一致。
+当前正式版本为 **v2.0.5**。推送与 `Cargo.toml` 版本一致的 `vX.Y.Z` 标签会自动执行质量检查，并发布以下六个资产及 SHA-256 校验和：
+
+| 平台 | 推荐便携包 | 高级用户 bare 包 |
+|------|------------|------------------|
+| Linux x86_64 | `aeterna-X.Y.Z-linux-x86_64-portable.tar.gz` | `aeterna-X.Y.Z-linux-x86_64-bare.tar.gz` |
+| Windows x86_64 | `aeterna-X.Y.Z-windows-x86_64-portable.zip` | `aeterna-X.Y.Z-windows-x86_64-bare.zip` |
+| macOS Apple Silicon | `aeterna-X.Y.Z-macos-arm64-portable.zip` | `aeterna-X.Y.Z-macos-arm64-bare.tar.gz` |
+
+Linux 便携包是 Qt runtime bundle，不是 AppImage，仍依赖兼容的系统图形和基础库。macOS 便携包目前未签名、未公证，首次启动可能需要在 Finder 中右键选择“打开”。
 
 ## 贡献
 

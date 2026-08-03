@@ -18,6 +18,8 @@ ColumnLayout {
     property bool endBeforeStart: false
     property bool _syncing: false
     property bool materialsExpanded: true
+    property int pendingMaterialIndex: -1
+    property bool pendingMaterialClear: false
 
     // Materials helpers — see MaterialUtils.qml for full implementation.
     function parseMaterials(v)   { return MaterialUtils.parseMaterials(v) }
@@ -119,6 +121,30 @@ ColumnLayout {
     function clearAllMaterials() {
         materialsModel.clear()
         syncMaterialsToExam()
+    }
+
+    function requestRemoveMaterial(index) {
+        if (index < 0 || index >= materialsModel.count) return
+        pendingMaterialIndex = index
+        pendingMaterialClear = false
+        materialDeleteDialog.open()
+    }
+
+    function requestClearMaterials() {
+        if (materialsModel.count === 0) return
+        pendingMaterialIndex = -1
+        pendingMaterialClear = true
+        materialDeleteDialog.open()
+    }
+
+    function confirmMaterialDeletion() {
+        if (pendingMaterialClear) {
+            clearAllMaterials()
+        } else {
+            removeMaterial(pendingMaterialIndex)
+        }
+        pendingMaterialIndex = -1
+        pendingMaterialClear = false
     }
 
     onCurrentExamIndexChanged: {
@@ -396,71 +422,31 @@ ColumnLayout {
 
                     Item { Layout.fillWidth: true }
 
-                    // Validate — 32px touch target
-                    Item {
-                        Layout.preferredWidth: Theme.sizeIconButtonMedium
-                        Layout.preferredHeight: Theme.sizeIconButtonMedium
+                    IconButton {
                         Layout.alignment: Qt.AlignVCenter
-
-                        Icon {
-                            name: "checkmark.circle"
-                            size: 16
-                            tier: Icon.Success
-                            accessibleName: "验证配置"
-                            anchors.centerIn: parent
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: editorWindow.validateConfigWithDetails(editorWindow.buildConfigJson())
-                        }
+                        icon: "checkmark.circle"
+                        iconSize: 16
+                        accessibleName: "验证配置"
+                        onClicked: editorWindow.validateConfigWithDetails(editorWindow.buildConfigJson())
                     }
 
-                    // Collapse toggle — 32px touch target
-                    Item {
-                        Layout.preferredWidth: Theme.sizeIconButtonMedium
-                        Layout.preferredHeight: Theme.sizeIconButtonMedium
+                    IconButton {
                         Layout.alignment: Qt.AlignVCenter
-
-                        Icon {
-                            name: "arrow.right"
-                            size: 16
-                            tier: Icon.Secondary
-                            accessibleName: root.materialsExpanded ? "折叠材料清单" : "展开材料清单"
-                            rotation: root.materialsExpanded ? -90 : 90
-                            anchors.centerIn: parent
-                            Behavior on rotation {
-                                NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
-                            }
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.materialsExpanded = !root.materialsExpanded
-                        }
+                        icon: "arrow.right"
+                        iconSize: 16
+                        accessibleName: root.materialsExpanded ? "折叠材料清单" : "展开材料清单"
+                        onClicked: root.materialsExpanded = !root.materialsExpanded
                     }
 
-                    // Clear all — 32px touch target
-                    Item {
-                        Layout.preferredWidth: Theme.sizeIconButtonMedium
-                        Layout.preferredHeight: Theme.sizeIconButtonMedium
+                    IconButton {
                         Layout.alignment: Qt.AlignVCenter
-
-                        Icon {
-                            name: "xmark"
-                            size: 16
-                            tier: Icon.Danger
-                            accessibleName: "清空全部材料"
-                            anchors.centerIn: parent
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.clearAllMaterials()
-                        }
+                        icon: "xmark"
+                        iconSize: 16
+                        danger: true
+                        enabled: materialsModel.count > 0
+                        accessibleName: "清空全部材料"
+                        accessibleDescription: "需要确认后才会删除所有材料"
+                        onClicked: root.requestClearMaterials()
                     }
                 }
 
@@ -555,46 +541,24 @@ ColumnLayout {
                                     }
                                 }
 
-                                // Duplicate action — 32px touch target
-                                Item {
-                                    Layout.preferredWidth: Theme.sizeIconButtonMedium
-                                    Layout.preferredHeight: Theme.sizeIconButtonMedium
+                                IconButton {
                                     Layout.alignment: Qt.AlignVCenter
-
-                                    Icon {
-                                        name: "doc"
-                                        size: 16
-                                        tier: Icon.Secondary
-                                        anchors.centerIn: parent
-                                    }
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.duplicateMaterial(index)
-                                    }
+                                    icon: "doc"
+                                    iconSize: 16
+                                    size: Theme.minHitTarget
+                                    accessibleName: "复制材料"
+                                    onClicked: root.duplicateMaterial(index)
                                 }
 
-                                // Delete action — 32px touch target
-                                Item {
-                                    Layout.preferredWidth: Theme.sizeIconButtonMedium
-                                    Layout.preferredHeight: Theme.sizeIconButtonMedium
+                                IconButton {
                                     Layout.alignment: Qt.AlignVCenter
-
-                                    Icon {
-                                        name: "trash"
-                                        size: 16
-                                        tier: Icon.Danger
-                                        anchors.centerIn: parent
-                                    }
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.removeMaterial(index)
-                                    }
+                                    icon: "trash"
+                                    iconSize: 16
+                                    size: Theme.minHitTarget
+                                    danger: true
+                                    accessibleName: "删除材料"
+                                    accessibleDescription: "需要确认后才会删除此材料"
+                                    onClicked: root.requestRemoveMaterial(index)
                                 }
                             }
                         }
@@ -620,6 +584,35 @@ ColumnLayout {
                             font.family: Theme.fontSans
                             Layout.alignment: Qt.AlignHCenter
                         }
+                    }
+                }
+            }
+        }
+
+        ConfirmDialog {
+            id: materialDeleteDialog
+            titleText: root.pendingMaterialClear ? "清空全部材料" : "删除材料"
+            messageText: root.pendingMaterialClear
+                         ? "确定要删除全部考试材料吗？此操作可通过编辑器的撤销功能恢复。"
+                         : "确定要删除此材料吗？此操作可通过编辑器的撤销功能恢复。"
+
+            footer: RowLayout {
+                spacing: Theme.spacing12
+                Layout.margins: Theme.spacing16
+
+                Item { Layout.fillWidth: true }
+
+                PinguoButton {
+                    text: "取消"
+                    variant: PinguoButton.Text
+                    onClicked: materialDeleteDialog.close()
+                }
+                PinguoButton {
+                    text: root.pendingMaterialClear ? "清空全部" : "删除材料"
+                    variant: PinguoButton.Destructive
+                    onClicked: {
+                        root.confirmMaterialDeletion()
+                        materialDeleteDialog.close()
                     }
                 }
             }

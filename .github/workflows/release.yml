@@ -20,35 +20,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ═══════════════════════════════════════════════
-  # Quality gates — fmt + clippy + test (Linux)
-  # ═══════════════════════════════════════════════
   quality:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install system dependencies
+      - name: Install Qt build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            qt6-base-dev qt6-declarative-dev \
-            libgl1-mesa-dev libxkbcommon-dev \
-            libfontconfig1-dev librsvg2-bin
-
+          sudo apt-get install -y -qq qt6-base-dev qt6-declarative-dev qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qt-labs-platform libgl1-mesa-dev libxkbcommon-dev libfontconfig1-dev
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
       - name: Check formatting
         run: cargo fmt --all --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings -A dead_code -A unused -A clippy::useless_transmute
-
-      - name: Test
-        run: cargo test --release
+      - name: Clippy (complete build)
+        run: cargo clippy --locked --all-targets -- -D warnings -A dead_code -A unused -A clippy::useless_transmute
+      - name: Clippy (minimal build)
+        run: cargo clippy --locked --all-targets --no-default-features -- -D warnings -A dead_code -A unused -A clippy::useless_transmute
+      - name: Test complete build
+        run: cargo test --locked --release
+      - name: Test minimal build
+        run: cargo test --locked --no-default-features --release
 
   verify-release-version:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -63,134 +56,149 @@ jobs:
           test -n "$package_version"
           test "$tag_version" = "$package_version"
 
-  # ═══════════════════════════════════════════════
-  # Linux x86_64 — stripped binary (no Qt bundle)
-  # ═══════════════════════════════════════════════
   linux-x86_64:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install system dependencies
+      - name: Install Qt runtime and build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            qt6-base-dev qt6-declarative-dev libqt6sql6-mysql \
-            libgl1-mesa-dev libxkbcommon-dev \
-            libfontconfig1-dev librsvg2-bin
-
+          sudo apt-get install -y -qq qt6-base-dev qt6-declarative-dev qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qt-labs-platform libgl1-mesa-dev libxkbcommon-dev libfontconfig1-dev
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
-
-      - name: Build (release)
-        run: cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Strip & rename
+      - name: Build complete release
+        run: cargo build --locked --release --target x86_64-unknown-linux-gnu
+      - name: Stage portable and bare archives
+        shell: bash
         run: |
-          strip target/x86_64-unknown-linux-gnu/release/aeterna
-          cp target/x86_64-unknown-linux-gnu/release/aeterna aeterna-x86_64-linux
-          sha256sum aeterna-x86_64-linux > aeterna-x86_64-linux.sha256
-
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          PORTABLE="dist/aeterna-${VERSION}-linux-x86_64-portable"
+          BARE="dist/aeterna-${VERSION}-linux-x86_64-bare"
+          BIN="target/x86_64-unknown-linux-gnu/release/aeterna"
+          QT_LIB="/usr/lib/x86_64-linux-gnu"
+          QT_QML="/usr/lib/x86_64-linux-gnu/qt6/qml"
+          QT_PLUGINS="/usr/lib/x86_64-linux-gnu/qt6/plugins"
+          rm -rf dist
+          install -Dm755 "$BIN" "$PORTABLE/bin/aeterna"
+          install -Dm644 LICENSE "$PORTABLE/LICENSE"
+          install -Dm644 packaging/runtime/README-portable.txt "$PORTABLE/README.txt"
+          install -Dm755 "$BIN" "$BARE/aeterna"
+          install -Dm644 LICENSE "$BARE/LICENSE"
+          install -Dm644 packaging/runtime/README-bare.txt "$BARE/README.txt"
+          mkdir -p "$PORTABLE/lib" "$PORTABLE/plugins" "$PORTABLE/qml/Qt"
+          cp -aL "$QT_LIB"/libQt6{Core,DBus,Gui,LabsPlatform,Network,OpenGL,Qml,QmlMeta,QmlModels,QmlWorkerScript,Quick,QuickControls2,QuickLayouts,QuickTemplates2,Widgets}.so.6 "$PORTABLE/lib/"
+          cp -a "$QT_PLUGINS/platforms" "$PORTABLE/plugins/"
+          [ ! -d "$QT_PLUGINS/imageformats" ] || cp -a "$QT_PLUGINS/imageformats" "$PORTABLE/plugins/"
+          cp -a "$QT_QML/QtQuick" "$PORTABLE/qml/"
+          cp -a "$QT_QML/Qt/labs" "$PORTABLE/qml/Qt/"
+          printf '%s\n' '[Paths]' 'Prefix=..' 'Libraries=lib' 'Plugins=plugins' 'Qml2Imports=qml' > "$PORTABLE/bin/qt.conf"
+          tar -C dist -czf "dist/aeterna-${VERSION}-linux-x86_64-portable.tar.gz" "$(basename "$PORTABLE")"
+          tar -C dist -czf "dist/aeterna-${VERSION}-linux-x86_64-bare.tar.gz" "$(basename "$BARE")"
+          tar -tzf "dist/aeterna-${VERSION}-linux-x86_64-portable.tar.gz" >/dev/null
+          readelf -d "$PORTABLE/bin/aeterna" | grep -q 'ORIGIN/../lib'
+          sha256sum dist/*.tar.gz > "dist/aeterna-${VERSION}-linux-x86_64.SHA256"
       - uses: actions/upload-artifact@v6
         with:
-          name: aeterna-x86_64-linux
-          path: |
-            aeterna-x86_64-linux
-            aeterna-x86_64-linux.sha256
+          name: aeterna-linux-x86_64
+          path: dist/
 
-  # ═══════════════════════════════════════════════
-  # Windows x86_64 — stripped binary (no Qt bundle)
-  # ═══════════════════════════════════════════════
   windows-x86_64:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Qt6 (via aqt)
+      - name: Install Qt 6
+        shell: pwsh
         run: |
           pip install aqtinstall
-          aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O D:\a\Qt
-          echo "Qt6_DIR=D:\a\Qt\6.8.3\msvc2022_64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "D:\a\Qt\6.8.3\msvc2022_64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-
+          aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtdeclarative -O D:\a\Qt
+          $qt = 'D:\a\Qt\6.8.3\msvc2022_64'
+          "QT_PREFIX=$qt" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "QMAKE=$qt\bin\qmake.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$qt\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          if (-not (Test-Path "$qt\bin\windeployqt.exe")) { throw 'windeployqt.exe is missing' }
+          if (-not (Test-Path "$qt\qml\QtQuick")) { throw 'QtQuick QML imports are missing' }
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
-      - name: Build (release)
-        run: cargo build --release --target x86_64-pc-windows-msvc
+      - name: Build and package
         shell: pwsh
-        env:
-          Qt6_DIR: D:\a\Qt\6.8.3\msvc2022_64
-
-      - name: Strip & rename
         run: |
-          strip target\x86_64-pc-windows-msvc\release\aeterna.exe
-          Move-Item target\x86_64-pc-windows-msvc\release\aeterna.exe aeterna.exe
-          Get-FileHash -Algorithm SHA256 aeterna.exe | ForEach-Object { "$($_.Hash.ToLower())  aeterna.exe" } | Out-File aeterna-x86_64-windows.sha256 -Encoding ascii
-        shell: pwsh
-
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $qt = $env:QT_PREFIX
+          $exe = 'target\x86_64-pc-windows-msvc\release\aeterna.exe'
+          $portable = "dist\aeterna-$version-windows-x86_64-portable"
+          $bare = "dist\aeterna-$version-windows-x86_64-bare"
+          cargo build --locked --release --target x86_64-pc-windows-msvc
+          New-Item -ItemType Directory -Force $portable, $bare | Out-Null
+          Copy-Item $exe "$portable\aeterna.exe"
+          Copy-Item $exe "$bare\aeterna.exe"
+          Copy-Item LICENSE "$portable\LICENSE"; Copy-Item LICENSE "$bare\LICENSE"
+          Copy-Item packaging\runtime\README-portable.txt "$portable\README.txt"
+          Copy-Item packaging\runtime\README-bare.txt "$bare\README.txt"
+          & "$qt\bin\windeployqt.exe" --release --qmldir resources\qml --no-translations "$portable\aeterna.exe"
+          Compress-Archive -Path $portable -DestinationPath "dist\aeterna-$version-windows-x86_64-portable.zip"
+          Compress-Archive -Path $bare -DestinationPath "dist\aeterna-$version-windows-x86_64-bare.zip"
+          Get-ChildItem 'dist\*.zip' | ForEach-Object { "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii "dist\aeterna-$version-windows-x86_64.SHA256"
       - uses: actions/upload-artifact@v6
         with:
-          name: aeterna-x86_64-windows
-          path: |
-            aeterna.exe
-            aeterna-x86_64-windows.sha256
+          name: aeterna-windows-x86_64
+          path: dist/
 
-  # ═══════════════════════════════════════════════
-  # macOS Apple Silicon (arm64) — stripped binary
-  # ═══════════════════════════════════════════════
   macos-arm64:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Qt6
+      - name: Install Qt 6
+        shell: bash
         run: |
-          brew untap aws/tap 2>/dev/null || true
-          brew update > /dev/null 2>&1
           brew install qt@6
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix qt@6)" >> $GITHUB_ENV
-
+          QT_PREFIX="$(brew --prefix qt@6)"
+          echo "QT_PREFIX=$QT_PREFIX" >> "$GITHUB_ENV"
+          echo "QMAKE=$QT_PREFIX/bin/qmake" >> "$GITHUB_ENV"
+          echo "$QT_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-
-      - name: Build (release)
-        run: cargo build --release --target aarch64-apple-darwin
-
-      - name: Strip & rename
+      - name: Build and package
+        shell: bash
         run: |
-          strip target/aarch64-apple-darwin/release/aeterna
-          cp target/aarch64-apple-darwin/release/aeterna aeterna-arm64-macos
-          shasum -a 256 aeterna-arm64-macos > aeterna-arm64-macos.sha256
-
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          APP="dist/aeterna.app"
+          BARE="dist/aeterna-${VERSION}-macos-arm64-bare"
+          cargo build --locked --release --target aarch64-apple-darwin
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$BARE"
+          install -m755 target/aarch64-apple-darwin/release/aeterna "$APP/Contents/MacOS/aeterna"
+          sed "s/@VERSION@/${VERSION}/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+          install -m644 LICENSE "$APP/Contents/Resources/LICENSE"
+          install -m644 packaging/runtime/README-portable.txt "$APP/Contents/Resources/README.txt"
+          "$QT_PREFIX/bin/macdeployqt" "$APP" -qmldir=resources/qml -always-overwrite
+          install -m755 target/aarch64-apple-darwin/release/aeterna "$BARE/aeterna"
+          install -m644 LICENSE "$BARE/LICENSE"
+          install -m644 packaging/runtime/README-bare.txt "$BARE/README.txt"
+          test -f "$APP/Contents/PlugIns/platforms/libqcocoa.dylib"
+          test -d "$APP/Contents/Resources/qml/QtQuick"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/aeterna-${VERSION}-macos-arm64-portable.zip"
+          tar -C dist -czf "dist/aeterna-${VERSION}-macos-arm64-bare.tar.gz" "$(basename "$BARE")"
+          ! otool -L "$APP/Contents/MacOS/aeterna" | grep -q '/opt/homebrew/Cellar'
+          shasum -a 256 dist/*.zip dist/*.tar.gz > "dist/aeterna-${VERSION}-macos-arm64.SHA256"
       - uses: actions/upload-artifact@v6
         with:
-          name: aeterna-arm64-macos
-          path: |
-            aeterna-arm64-macos
-            aeterna-arm64-macos.sha256
+          name: aeterna-macos-arm64
+          path: dist/
 
-  # ═══════════════════════════════════════════════
-  # Create GitHub Release (only on tag push)
-  # ═══════════════════════════════════════════════
   release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs:
-      - quality
-      - verify-release-version
-      - linux-x86_64
-      - windows-x86_64
-      - macos-arm64
-      - macos-arm64
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [quality, verify-release-version, linux-x86_64, windows-x86_64, macos-arm64]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -198,32 +206,29 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           path: artifacts
-
-      - name: Generate release notes
+          merge-multiple: true
+      - name: Generate release notes and combined checksums
+        shell: bash
         run: |
-          cat > release-notes.md << 'EOF'
+          set -euo pipefail
+          cd artifacts
+          sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+          cat > ../release-notes.md <<'EOF'
           ## Aeterna ${{ github.ref_name }}
 
-          ### 📦 Downloads
+          Portable archives bundle Qt runtime components and are recommended for most users.
+          Bare archives contain only Aeterna and require an ABI-compatible Qt 6 runtime.
 
-          | Platform | File |
-          |----------|------|
-          | Linux x86_64 | `aeterna-x86_64-linux` |
-          | Windows x86_64 | `aeterna.exe` |
-          | macOS Apple Silicon | `aeterna-arm64-macos` |
-
-          > 本版本仅提供可执行文件，运行时需安装 Qt 6.5+。
-          > 运行方式：`./aeterna` (Linux/macOS)、双击 `aeterna.exe` (Windows)。
+          Linux portable is a Qt bundle rather than an AppImage and still uses compatible host graphics and system libraries.
+          macOS portable is unsigned and not notarized.
           EOF
-
-          find artifacts -type f -name '*.sha256' -delete
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Aeterna ${{ github.ref_name }}
           body_path: release-notes.md
-          draft: false
-          prerelease: false
-          files: artifacts/**/*
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.SHA256
+            artifacts/SHA256SUMS.txt

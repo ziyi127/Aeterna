@@ -17,10 +17,12 @@ import QtQuick.Layouts 1.15
 Item {
     id: root
 
-    enum Variant { Primary, Secondary, Text, Hero }
+    enum Variant { Primary, Secondary, Text, Hero, Destructive }
 
     property string text: ""
     property string icon: ""
+    property string accessibleName: text
+    property string accessibleDescription: ""
     property int variant: PinguoButton.Primary
     property bool showTrailingArrow: false
 
@@ -29,6 +31,7 @@ Item {
     
 
     readonly property bool isPrimary: variant === PinguoButton.Primary || variant === PinguoButton.Hero
+    readonly property bool isDestructive: variant === PinguoButton.Destructive
     readonly property bool isHero: variant === PinguoButton.Hero
     readonly property bool isText: variant === PinguoButton.Text
 
@@ -44,13 +47,22 @@ Item {
     opacity: root.enabled ? 1.0 : 0.42
     activeFocusOnTab: true
 
+    Accessible.role: Accessible.Button
+    Accessible.name: root.accessibleName
+    Accessible.description: root.accessibleDescription
+    Accessible.onPressAction: {
+        if (root.enabled)
+            root.clicked()
+    }
+
     Rectangle {
         id: background
         anchors.fill: parent
         radius: Theme.radiusPill
         color: {
-            if (!root.enabled) return root.isPrimary ? Theme.primary : (root.isText ? "transparent" : Theme.secondary);
+            if (!root.enabled) return root.isPrimary || root.isDestructive ? (root.isDestructive ? Theme.destructive : Theme.primary) : (root.isText ? "transparent" : Theme.secondary);
             if (root.isText) return "transparent";
+            if (root.isDestructive) return btnMouse.containsMouse ? Qt.darker(Theme.destructive, 1.04) : Theme.destructive;
             if (root.isPrimary) return btnMouse.containsMouse ? Qt.darker(Theme.primary, 1.04) : Theme.primary;
             return btnMouse.containsMouse ? Theme.muted : Theme.secondary;
         }
@@ -85,13 +97,13 @@ Item {
             size: root.fontSize
             tier: Icon.Primary
             // Pinguo spec: icons on filled buttons use the foreground color for contrast
-            overrideColor: root.isPrimary ? Theme.primaryForeground : Theme.foreground
+            overrideColor: root.isPrimary || root.isDestructive ? Theme.primaryForeground : Theme.foreground
         }
 
         Text {
             visible: root.text !== ""
             text: root.text
-            color: root.isPrimary ? Theme.primaryForeground
+            color: root.isPrimary || root.isDestructive ? Theme.primaryForeground
                                   : (root.isText && btnMouse.containsMouse ? Theme.primary : Theme.foreground)
             font.pixelSize: root.fontSize
             font.weight: Theme.weightSemibold
@@ -107,7 +119,8 @@ Item {
         Text {
             visible: root.showTrailingArrow && !root.isPrimary
             text: "›"
-            color: root.isText && btnMouse.containsMouse ? Theme.primary : Theme.foreground
+            color: root.isPrimary || root.isDestructive ? Theme.primaryForeground
+                  : (root.isText && btnMouse.containsMouse ? Theme.primary : Theme.foreground)
             font.pixelSize: root.fontSize + 2
             font.family: Theme.fontSans
 
@@ -131,6 +144,7 @@ Item {
     Keys.onPressed: {
         if (root.enabled && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
             root.clicked()
+            event.accepted = true
         }
     }
 }

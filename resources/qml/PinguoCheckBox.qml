@@ -14,9 +14,23 @@ Item {
     id: root
 
     property string text: ""
+    property string accessibleName: text
+    property string accessibleDescription: ""
     property bool checked: false
 
     signal toggled()
+
+    activeFocusOnTab: true
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: root.accessibleName
+    Accessible.description: root.accessibleDescription
+    Accessible.checked: root.checked
+    Accessible.onToggleAction: {
+        if (root.enabled) {
+            root.checked = !root.checked
+            root.toggled()
+        }
+    }
 
     implicitWidth: rowLayout.implicitWidth
     implicitHeight: Theme.sizeButtonSmall

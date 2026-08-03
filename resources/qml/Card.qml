@@ -1,6 +1,5 @@
 import QtQuick 2.15
 import "."
-import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 // =====================================================================
@@ -35,7 +34,7 @@ Item {
         anchors.fill: parent
 
         // Lift on hover: shift up 2px
-        y: (_hovered && root.enabled && root.hoverEnabled) ? -2 : 0
+        y: (root._hovered && root.enabled && root.hoverEnabled) ? -2 : 0
         Behavior on y {
             NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
         }
@@ -46,50 +45,10 @@ Item {
             NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
         }
 
-        // ── Shadow gutter — the card is slightly inset so the
-        //     shadow blur stays visible outside the bounds. ──
-        Item {
-            id: shadowGutter
-            anchors.fill: parent
-            anchors.margins: -12
-
-            // Shadow blur — pure ShaderEffect, no Qt5Compat needed
-            ShaderEffect {
-                id: cardShadow
-                anchors.fill: parent
-                property variant src: cardBackground
-                property real blurRadius: (_hovered && root.enabled && root.hoverEnabled) ? 12.0 : 4.0
-                property real shadowOpacity: (_hovered && root.enabled && root.hoverEnabled)
-                                              ? Theme.shadowOpacityFloat : Theme.shadowOpacityCard
-                property color shadowColor: Theme.shadowColor
-
-                // Simple blur + tint shader
-                fragmentShader: "
-                    varying highp vec2 qt_TexCoord0;
-                    uniform sampler2D src;
-                    uniform lowp float blurRadius;
-                    uniform lowp float shadowOpacity;
-                    uniform lowp vec4 shadowColor;
-
-                    void main() {
-                        lowp vec4 col = texture2D(src, qt_TexCoord0);
-                        // Use alpha channel as distance from opaque region;
-                        // amplify it with blurRadius to get a soft halo.
-                        lowp float d = col.a;
-                        lowp float kernel = exp(-d * blurRadius * 2.0);
-                        lowp float alpha = kernel * shadowOpacity;
-                        gl_FragColor = vec4(shadowColor.rgb, shadowColor.a * alpha);
-                    }"
-                visible: shadowOpacity > 0.0
-
-                Behavior on blurRadius {
-                    NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
-                }
-                Behavior on shadowOpacity {
-                    NumberAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
-                }
-            }
-        }
+        // Qt 6 ShaderEffect requires precompiled .qsb assets for portable
+        // deployment. Until the project has a shader build pipeline, use the
+        // structural border from Material as elevation rather than a broken
+        // runtime GLSL shadow.
 
         Material {
             id: cardBackground
@@ -140,7 +99,7 @@ Item {
         acceptedButtons: Qt.NoButton
         cursorShape: root.hoverEnabled && root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
 
-        onEntered: { if (root.enabled) _hovered = true }
-        onExited: { _hovered = false }
+        onEntered: { if (root.enabled) root._hovered = true }
+        onExited: { root._hovered = false }
     }
 }

@@ -36,6 +36,12 @@ pub struct AppearanceSettings {
     pub theme: String,
     pub theme_mode: String,           // "auto" / "dark" / "light"
     pub custom_primary_color: String, // 空字符串 = 使用 Pinguo Blue
+    #[serde(default)]
+    pub reduce_transparency: bool,
+    #[serde(default)]
+    pub high_contrast: bool,
+    #[serde(default)]
+    pub reduced_motion: bool,
     pub body_font: String,
     pub number_font: String,
     pub font_size: i32,
@@ -90,8 +96,12 @@ pub struct HttpApiSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CastSettings {
-    pub enabled: bool,
-    pub allow_discovery: bool,
+    #[serde(default = "default_mdns_enabled", alias = "enabled")]
+    pub mdns_enabled: bool,
+    #[serde(default = "default_advertise_on_lan", alias = "allow_discovery")]
+    pub advertise_on_lan: bool,
+    #[serde(default = "generate_secure_id")]
+    pub device_id: String,
     pub device_name: String,
     pub allow_remote_control: bool,
     pub auto_accept: bool,
@@ -112,6 +122,9 @@ impl Default for Settings {
                 theme: "dark".to_string(),
                 theme_mode: "auto".to_string(),
                 custom_primary_color: String::new(),
+                reduce_transparency: false,
+                high_contrast: false,
+                reduced_motion: false,
                 body_font: "DM Sans".to_string(),
                 number_font: "DM Sans".to_string(),
                 font_size: 14,
@@ -155,14 +168,15 @@ impl Default for Settings {
             http_api: HttpApiSettings {
                 enabled: true,
                 port: 9527,
-                bind_address: "0.0.0.0".to_string(),
+                bind_address: "127.0.0.1".to_string(),
                 token_auth: false,
                 token: String::new(),
-                allow_cors: true,
+                allow_cors: false,
             },
             cast: CastSettings {
-                enabled: true,
-                allow_discovery: true,
+                mdns_enabled: true,
+                advertise_on_lan: true,
+                device_id: generate_secure_id(),
                 device_name: "Aeterna-001".to_string(),
                 allow_remote_control: false,
                 auto_accept: false,
@@ -172,8 +186,118 @@ impl Default for Settings {
     }
 }
 
+fn default_advertise_on_lan() -> bool {
+    true
+}
+
+fn default_mdns_enabled() -> bool {
+    true
+}
+
+pub(crate) fn generate_secure_id() -> String {
+    let mut bytes = [0_u8; 16];
+    if let Err(error) = fill_secure_random(&mut bytes) {
+        ::log::error!("Failed to generate cryptographic device ID: {}", error);
+        return String::new();
+    }
+    let mut id = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(id, "{byte:02x}");
+    }
+    id
+}
+
+#[cfg(unix)]
+fn fill_secure_random(bytes: &mut [u8]) -> Result<(), String> {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")
+        .map_err(|error| error.to_string())?
+        .read_exact(bytes)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn fill_secure_random(bytes: &mut [u8]) -> Result<(), String> {
+    #[link(name = "bcrypt")]
+    extern "system" {
+        fn BCryptGenRandom(
+            algorithm: *mut std::ffi::c_void,
+            buffer: *mut u8,
+            buffer_len: u32,
+            flags: u32,
+        ) -> i32;
+    }
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x00000002;
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            bytes.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    (status >= 0)
+        .then_some(())
+        .ok_or_else(|| format!("BCryptGenRandom failed: 0x{status:08X}"))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn fill_secure_random(_bytes: &mut [u8]) -> Result<(), String> {
+    Err("the platform does not provide a secure random source".to_string())
+}
+
 fn default_config_dir() -> String {
     aeterna_config_dir().to_string_lossy().to_string()
+}
+
+/// Load persisted settings for application bootstrap and background services.
+///
+/// The QML backend uses the same path, so services and the interface begin from
+/// the same persisted defaults even before the settings window is opened.
+pub fn load_persisted_settings() -> Settings {
+    let path = get_config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str::<Settings>(&content) {
+            Ok(mut settings) => {
+                if settings.cast.device_id.is_empty() {
+                    settings.cast.device_id = generate_secure_id();
+                    if settings.cast.device_id.is_empty() {
+                        ::log::error!("Unable to initialize the persistent device ID");
+                    } else if let Err(error) = crate::core::utils::atomic_write(
+                        std::path::Path::new(&path),
+                        serde_json::to_string_pretty(&settings)
+                            .unwrap_or_default()
+                            .as_bytes(),
+                    ) {
+                        ::log::warn!(
+                            "Failed to persist generated device ID at {}: {}",
+                            path,
+                            error
+                        );
+                    }
+                }
+                settings
+            }
+            Err(e) => {
+                ::log::warn!("Failed to parse settings at {}: {}", path, e);
+                Settings::default()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+        Err(e) => {
+            ::log::warn!("Failed to read settings at {}: {}", path, e);
+            Settings::default()
+        }
+    }
+}
+
+fn single_server_ntp_config(server: &str) -> Option<crate::services::ntp::NtpConfig> {
+    let server = server.trim();
+    (!server.is_empty()).then(|| crate::services::ntp::NtpConfig {
+        servers: vec![server.to_string()],
+        ..crate::services::ntp::NtpConfig::default()
+    })
 }
 
 /// 设置窗口的 Rust 后端逻辑
@@ -253,7 +377,15 @@ impl SettingsBackend {
         self.config_path_changed();
 
         if let Ok(content) = std::fs::read_to_string(&config_path) {
-            if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
+            if let Ok(mut settings) = serde_json::from_str::<Settings>(&content) {
+                if settings.cast.device_id.is_empty() {
+                    settings.cast.device_id = generate_secure_id();
+                    if settings.cast.device_id.is_empty() {
+                        ::log::error!("Unable to initialize the persistent device ID");
+                    } else {
+                        let _ = self.save_settings_to_file(&settings, &config_path);
+                    }
+                }
                 *self._settings.lock().unwrap() = settings;
                 self.settings_json_changed();
                 return;
@@ -274,23 +406,38 @@ impl SettingsBackend {
         self.save_settings_to_file(&settings, &config_path)
     }
 
-    /// 更新设置（从 JSON）。自动确保 config dir 存在后再写入。
+    /// Updates settings only after the live HTTP configuration has accepted them.
     pub fn update_settings(&self, json: QString) -> bool {
-        let json_str = json.to_string();
-        if let Ok(new_settings) = serde_json::from_str::<Settings>(&json_str) {
-            *self._settings.lock().unwrap() = new_settings;
-            self.settings_json_changed();
-
-            // Ensure config directory exists, then save
-            let config_path = get_config_path();
-            if let Some(parent) = std::path::Path::new(&config_path).parent() {
-                let _ = std::fs::create_dir_all(parent);
+        let Ok(new_settings) = serde_json::from_str::<Settings>(&json.to_string()) else {
+            return false;
+        };
+        let old_settings = self._settings.lock().unwrap().clone();
+        let api = crate::services::http_api::ApiConfig::from_settings(&new_settings.http_api);
+        if let Some(service) = crate::services::http_api::global() {
+            if service.reconfigure(api).is_err() {
+                return false;
             }
-            *self._config_path.lock().unwrap() = config_path.clone();
-            self.save()
-        } else {
-            false
         }
+
+        let config_path = get_config_path();
+        if let Some(parent) = std::path::Path::new(&config_path).parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                restore_http_api(&old_settings);
+                return false;
+            }
+        }
+        if !self.save_settings_to_file(&new_settings, &config_path) {
+            restore_http_api(&old_settings);
+            return false;
+        }
+
+        *self._settings.lock().unwrap() = new_settings.clone();
+        *self._config_path.lock().unwrap() = config_path;
+        if let Some(runtime) = crate::services::share_runtime::global() {
+            runtime.update_settings(new_settings);
+        }
+        self.settings_json_changed();
+        true
     }
 
     /// 获取当前设置
@@ -469,7 +616,10 @@ impl SettingsBackend {
 
     /// 测试单个 NTP 服务器。异步执行，结果通过 ntp_test_result 信号返回。
     fn test_ntp_server(&self, server: QString) -> bool {
-        let server_str = server.to_string();
+        let Some(config) = single_server_ntp_config(&server.to_string()) else {
+            return false;
+        };
+        let server_name = config.servers[0].clone();
         let qptr = QPointer::from(self);
         let sender = queued_callback(move |(idx, success, msg): (i32, bool, String)| {
             if let Some(this) = qptr.as_ref() {
@@ -482,12 +632,12 @@ impl SettingsBackend {
             s.time
                 .ntp_servers
                 .iter()
-                .position(|srv| srv == &server_str)
+                .position(|srv| srv.trim() == server_name)
                 .map(|i| i as i32)
                 .unwrap_or(-1)
         };
         std::thread::spawn(move || {
-            let service = crate::services::ntp::NtpService::new();
+            let service = crate::services::ntp::NtpService::with_config(config);
             let result = service.sync();
             if result.status == crate::services::ntp::NtpSyncStatus::Synced {
                 sender((
@@ -566,21 +716,9 @@ impl SettingsBackend {
     }
 
     fn save_settings_to_file(&self, settings: &Settings, path: &str) -> bool {
-        let p = std::path::Path::new(path);
-        if let Some(parent) = p.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                ::log::error!(
-                    "Failed to create settings directory {}: {}",
-                    parent.display(),
-                    e
-                );
-                return false;
-            }
-        }
-
-        match serde_json::to_string_pretty(settings) {
-            Ok(json) => match std::fs::write(path, json) {
-                Ok(_) => {
+        match serde_json::to_vec_pretty(settings) {
+            Ok(json) => match crate::core::utils::atomic_write(std::path::Path::new(path), &json) {
+                Ok(()) => {
                     ::log::info!("Settings saved to {}", path);
                     true
                 }
@@ -597,9 +735,105 @@ impl SettingsBackend {
     }
 }
 
+fn restore_http_api(settings: &Settings) {
+    if let Some(service) = crate::services::http_api::global() {
+        if let Err(error) = service.reconfigure(
+            crate::services::http_api::ApiConfig::from_settings(&settings.http_api),
+        ) {
+            ::log::error!("Failed to restore HTTP API configuration: {error}");
+        }
+    }
+}
+
 fn get_config_path() -> String {
     aeterna_config_dir()
         .join("settings.json")
         .to_string_lossy()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cast_settings_migrate_legacy_discovery_fields() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        let cast = value
+            .get_mut("cast")
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap();
+        cast.remove("mdns_enabled");
+        cast.remove("advertise_on_lan");
+        cast.insert("enabled".to_string(), serde_json::Value::Bool(false));
+        cast.insert(
+            "allow_discovery".to_string(),
+            serde_json::Value::Bool(false),
+        );
+
+        let settings: Settings = serde_json::from_value(value).unwrap();
+        assert!(!settings.cast.mdns_enabled);
+        assert!(!settings.cast.advertise_on_lan);
+    }
+
+    #[test]
+    fn generated_device_ids_are_securely_sized_and_unique() {
+        let first = generate_secure_id();
+        let second = generate_secure_id();
+        assert_eq!(first.len(), 32);
+        assert_eq!(second.len(), 32);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn appearance_accessibility_defaults_support_legacy_settings() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        let appearance = value
+            .get_mut("appearance")
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap();
+        appearance.remove("reduce_transparency");
+        appearance.remove("high_contrast");
+        appearance.remove("reduced_motion");
+
+        let settings: Settings = serde_json::from_value(value).unwrap();
+        assert!(!settings.appearance.reduce_transparency);
+        assert!(!settings.appearance.high_contrast);
+        assert!(!settings.appearance.reduced_motion);
+    }
+
+    #[test]
+    fn appearance_accessibility_preferences_round_trip() {
+        let mut settings = Settings::default();
+        settings.appearance.reduce_transparency = true;
+        settings.appearance.high_contrast = true;
+        settings.appearance.reduced_motion = true;
+
+        let value = serde_json::to_value(&settings).unwrap();
+        assert_eq!(value["appearance"]["reduce_transparency"], true);
+        assert_eq!(value["appearance"]["high_contrast"], true);
+        assert_eq!(value["appearance"]["reduced_motion"], true);
+
+        let restored: Settings = serde_json::from_value(value).unwrap();
+        assert!(restored.appearance.reduce_transparency);
+        assert!(restored.appearance.high_contrast);
+        assert!(restored.appearance.reduced_motion);
+    }
+
+    #[test]
+    fn single_server_ntp_config_uses_only_requested_server() {
+        let config = single_server_ntp_config(" ntp.example.test ").unwrap();
+        assert_eq!(config.servers, vec!["ntp.example.test"]);
+        assert_ne!(
+            config.servers,
+            crate::services::ntp::NtpConfig::default().servers
+        );
+    }
+
+    #[test]
+    fn single_server_ntp_config_rejects_blank_server() {
+        for server in ["", " ", "\t\n"] {
+            assert!(single_server_ntp_config(server).is_none());
+        }
+    }
 }

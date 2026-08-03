@@ -1327,7 +1327,8 @@ ApplicationWindow {
             }
             PinguoButton {
                 text: "不保存"
-                variant: PinguoButton.Secondary
+                variant: PinguoButton.Destructive
+                accessibleDescription: "放弃未保存的更改并继续"
                 onClicked: unsavedDialog.discardChanges()
             }
             PinguoButton {
@@ -1377,7 +1378,7 @@ ApplicationWindow {
             }
             PinguoButton {
                 text: "删除"
-                variant: PinguoButton.Primary
+                variant: PinguoButton.Destructive
                 onClicked: {
                     confirmDeleteDialog.close()
                     doRemoveExam()

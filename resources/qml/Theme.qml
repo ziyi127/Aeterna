@@ -23,6 +23,8 @@ QtObject {
     // ── Appearance modes ──
     readonly property bool darkMode: _darkMode
     property bool highContrast: false
+    property bool reduceTransparency: false
+    property bool reducedMotion: false
 
     // ═══════════════════════════════════════════════════════════════
     // PRIMITIVE PALETTE
@@ -105,27 +107,28 @@ QtObject {
     // ═══════════════════════════════════════════════════════════════
 
     // Surfaces
-    readonly property color background: darkMode ? background900 : background50
-    readonly property color foreground: darkMode ? text50 : text800
-    readonly property color card:       darkMode ? background800 : background50
-    readonly property color cardForeground: darkMode ? text50 : text800
-    readonly property color popover:    darkMode ? background700 : background50
-    readonly property color popoverForeground: darkMode ? text50 : text900
+    readonly property color background: highContrast ? (darkMode ? "#000000" : "#ffffff") : (darkMode ? background900 : background50)
+    readonly property color foreground: highContrast ? (darkMode ? "#ffffff" : "#000000") : (darkMode ? text50 : text800)
+    readonly property color card:       highContrast ? background : (darkMode ? background800 : background50)
+    readonly property color cardForeground: foreground
+    readonly property color popover:    highContrast ? background : (darkMode ? background700 : background50)
+    readonly property color popoverForeground: foreground
 
     // Actions / emphasis
     readonly property color primary: {
+        if (highContrast) return darkMode ? "#0a84ff" : "#005fcc";
         if (_customPrimaryColor !== "") {
             return _customPrimaryColor;
         }
         return darkMode ? brand400 : brand500;
     }
     readonly property color primaryForeground: darkMode ? background900 : background50
-    readonly property color secondary:       darkMode ? background800 : background200
-    readonly property color secondaryForeground: darkMode ? text50 : text800
-    readonly property color muted:           darkMode ? background800 : background200
-    readonly property color mutedForeground: darkMode ? text400 : text400
-    readonly property color accent:          darkMode ? background700 : background100
-    readonly property color accentForeground: darkMode ? text50 : text800
+    readonly property color secondary:       highContrast ? background : (darkMode ? background800 : background200)
+    readonly property color secondaryForeground: foreground
+    readonly property color muted:           highContrast ? background : (darkMode ? background800 : background200)
+    readonly property color mutedForeground: highContrast ? foreground : (darkMode ? text400 : text400)
+    readonly property color accent:          highContrast ? background : (darkMode ? background700 : background100)
+    readonly property color accentForeground: foreground
 
     // Status
     readonly property color destructive:          darkMode ? stateErrorDark : stateError
@@ -134,13 +137,13 @@ QtObject {
     readonly property color successForeground:    stateSuccessForeground
 
     // Edges
-    readonly property color border: darkMode ? background700 : background300
-    readonly property color input:  darkMode ? background700 : background400
-    readonly property color ring:   darkMode ? brand400 : brand500
+    readonly property color border: highContrast ? foreground : (darkMode ? background700 : background300)
+    readonly property color input:  highContrast ? foreground : (darkMode ? background700 : background400)
+    readonly property color ring:   highContrast ? foreground : (darkMode ? brand400 : brand500)
 
     // Icon tints
-    readonly property color icon:       darkMode ? icon50 : icon900
-    readonly property color iconMuted:  darkMode ? icon500 : icon500
+    readonly property color icon:       foreground
+    readonly property color iconMuted:  highContrast ? foreground : (darkMode ? icon500 : icon500)
 
     // Sidebar surfaces (Pinguo semantic sidebar roles)
     readonly property color sidebar:              darkMode ? background800 : background200
@@ -312,10 +315,25 @@ QtObject {
     // deliberately not used for content cards, preserving a clear hierarchy.
     // High-contrast mode provides the same readable fallback as Reduce
     // Transparency on Apple platforms.
-    readonly property color glassRegular: darkMode ? "#d91c1c1e" : "#e8f2f2f7"
+    readonly property color glassNavigation: darkMode ? "#e31c1c1e" : "#ebf2f2f7"
+    readonly property color glassToolbar: darkMode ? "#d91c1c1e" : "#e8f2f2f7"
+    readonly property color glassPopover: darkMode ? "#ed2c2c2e" : "#f5ffffff"
+    readonly property color glassDrawer: darkMode ? "#e82c2c2e" : "#eff7f7fa"
+    readonly property color glassClear: darkMode ? "#9e1c1c1e" : "#a8ffffff"
+    readonly property color glassRegular: glassToolbar
     readonly property color glassBorder:  darkMode ? "#40ffffff" : "#55ffffff"
     readonly property color glassHighlight: darkMode ? "#12ffffff" : "#80ffffff"
-    readonly property real glassOpacity: highContrast ? 1.0 : 0.92
+    readonly property color glassScrim: darkMode ? "#66000000" : "#26000000"
+    readonly property real glassOpacity: (highContrast || reduceTransparency) ? 1.0 : 0.92
+
+    readonly property color surfaceBase: materialBase
+    readonly property color surfaceRaised: materialElevated
+    readonly property color surfaceOverlay: materialOverlay
+    readonly property color surfaceDataCritical: darkMode ? "#e91c1c1e" : "#faffffff"
+    readonly property color focusRing: ring
+    readonly property color iconButtonHover: Qt.alpha(foreground, 0.08)
+    readonly property color iconButtonChecked: Qt.alpha(primary, 0.18)
+    readonly property color iconButtonDangerHover: Qt.alpha(destructive, 0.12)
 
     // Hairline border: structural 1px edge.
     // Pinguo spec: "1px borders to define edges before reaching for shadow."
@@ -358,9 +376,9 @@ QtObject {
     //   Qt 6.0+ BezierSpline: control points match Pinguo spec exactly.
     //   Edge: BezierSpline was added in Qt 6.0; on Qt 5.15 the closest
     //   fallback is OutCubic (0.33, 0.00, 0.67, 1.00).
-    readonly property int motionShort:   150
-    readonly property int motionMedium:  250
-    readonly property int motionLong:    350
+    readonly property int motionShort:   reducedMotion ? 0 : 150
+    readonly property int motionMedium:  reducedMotion ? 0 : 250
+    readonly property int motionLong:    reducedMotion ? 0 : 350
 
     readonly property int motionStandard:    Easing.OutCubic
     readonly property int motionDecelerate:  Easing.OutCubic

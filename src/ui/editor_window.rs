@@ -4,10 +4,9 @@
 use crate::core::parser;
 use crate::core::player;
 use crate::core::types::ExamConfig;
-use crate::core::utils::{aeterna_config_dir, strip_file_prefix};
+use crate::core::utils::{aeterna_config_dir, qml_file_input_to_path};
 use chrono::Local;
 use qmetaobject::*;
-use std::path::Path;
 use std::sync::Mutex;
 
 /// Editor backend — file I/O and validation for the exam editor window.
@@ -248,8 +247,18 @@ impl EditorBackend {
 
     /// 从文件打开配置。对应 `fileUtils.readJSONFile` + 校验 + 载入。
     fn loadFile(&self, path: QString) -> bool {
-        let path_str = strip_file_prefix(&path.to_string());
-        let content = match std::fs::read_to_string(&path_str) {
+        let path = match qml_file_input_to_path(&path.to_string()) {
+            Ok(path) => path,
+            Err(e) => {
+                *self._error.lock().unwrap() = e;
+                *self._valid.lock().unwrap() = false;
+                self.errorDetailsChanged();
+                self.configValidChanged();
+                return false;
+            }
+        };
+        let path_str = path.to_string_lossy().to_string();
+        let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
                 *self._error.lock().unwrap() = format!("无法读取文件 {}: {}", path_str, e);
@@ -295,7 +304,15 @@ impl EditorBackend {
     ///
     /// `json` 由 QML（renderer）构造，`path` 为目标文件路径。
     fn saveToFile(&self, path: QString, json: QString) -> bool {
-        let path_str = strip_file_prefix(&path.to_string());
+        let path = match qml_file_input_to_path(&path.to_string()) {
+            Ok(path) => path,
+            Err(e) => {
+                *self._error.lock().unwrap() = e;
+                self.emit_all();
+                return false;
+            }
+        };
+        let path_str = path.to_string_lossy().to_string();
         let json_str = json.to_string();
 
         let config: ExamConfig = match serde_json::from_str::<ExamConfig>(&json_str) {
@@ -324,7 +341,7 @@ impl EditorBackend {
         let pretty = serde_json::to_string_pretty(&config).unwrap_or_else(|_| json_str.clone());
 
         // 确保父目录存在
-        if let Some(parent) = Path::new(&path_str).parent() {
+        if let Some(parent) = path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 *self._error.lock().unwrap() = format!("无法创建目录: {}", e);
                 self.emit_all();
@@ -332,7 +349,7 @@ impl EditorBackend {
             }
         }
 
-        match std::fs::write(&path_str, &pretty) {
+        match std::fs::write(&path, &pretty) {
             Ok(_) => {
                 *self._config.lock().unwrap() = Some(config);
                 *self._config_json.lock().unwrap() = pretty;
@@ -463,7 +480,14 @@ impl EditorBackend {
     /// 添加文件路径到最近文件列表，移到最前并去重，最多保留 10 条。
     fn addRecentFile(&self, path: QString) {
         self.ensure_recent_files_loaded();
-        let path_str = strip_file_prefix(&path.to_string());
+        let path_str = match qml_file_input_to_path(&path.to_string()) {
+            Ok(path) => path.to_string_lossy().to_string(),
+            Err(e) => {
+                *self._error.lock().unwrap() = e;
+                self.errorDetailsChanged();
+                return;
+            }
+        };
 
         {
             let mut files = self._recent_files.lock().unwrap();
@@ -495,8 +519,16 @@ impl EditorBackend {
 
     /// 从 .aeterna/.json 文件导入配置。
     fn importFromFile(&self, path: QString) -> bool {
-        let path_str = strip_file_prefix(&path.to_string());
-        let content = match std::fs::read_to_string(&path_str) {
+        let path = match qml_file_input_to_path(&path.to_string()) {
+            Ok(path) => path,
+            Err(e) => {
+                let report = parser::ValidationReport::single_error("file", e);
+                self.apply_validation_report(None, String::new(), report);
+                return false;
+            }
+        };
+        let path_str = path.to_string_lossy().to_string();
+        let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
                 let report = parser::ValidationReport::single_error(
@@ -536,7 +568,14 @@ impl EditorBackend {
 
     /// 将 JSON 格式化后导出到指定路径。
     fn exportToFile(&self, path: QString, json: QString) -> bool {
-        let path_str = strip_file_prefix(&path.to_string());
+        let path = match qml_file_input_to_path(&path.to_string()) {
+            Ok(path) => path,
+            Err(e) => {
+                *self._error.lock().unwrap() = e;
+                self.errorDetailsChanged();
+                return false;
+            }
+        };
         let json_str = json.to_string();
 
         let pretty = match serde_json::from_str::<serde_json::Value>(&json_str) {
@@ -544,13 +583,13 @@ impl EditorBackend {
             Err(_) => json_str,
         };
 
-        if let Some(parent) = Path::new(&path_str).parent() {
+        if let Some(parent) = path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 return false;
             }
         }
 
-        std::fs::write(&path_str, pretty).is_ok()
+        std::fs::write(&path, pretty).is_ok()
     }
 
     /// 按考试开始时间对配置进行排序，返回排序后的格式化 JSON。

@@ -126,6 +126,70 @@ mod ui_backend {
         }
     }
 
+    /// Read-only local plugin manifest inventory. It deliberately exposes no
+    /// loading, execution, installation, update, or removal operations.
+    #[derive(QObject, Default)]
+    pub struct PluginManagerBackend {
+        base: qt_base_class!(trait QObject),
+        plugins_json: qt_property!(QString; READ plugins_json NOTIFY plugins_json_changed),
+        diagnostics_json: qt_property!(QString; READ diagnostics_json NOTIFY diagnostics_json_changed),
+        plugin_directory: qt_property!(QString; READ plugin_directory NOTIFY plugin_directory_changed),
+        refresh: qt_method!(fn(&self)),
+        plugins_json_changed: qt_signal!(),
+        diagnostics_json_changed: qt_signal!(),
+        plugin_directory_changed: qt_signal!(),
+        _plugins_json: Mutex<String>,
+        _diagnostics_json: Mutex<String>,
+    }
+
+    impl PluginManagerBackend {
+        fn plugins_json(&self) -> QString {
+            QString::from(self._plugins_json.lock().unwrap().as_str())
+        }
+
+        fn diagnostics_json(&self) -> QString {
+            QString::from(self._diagnostics_json.lock().unwrap().as_str())
+        }
+
+        fn plugin_directory(&self) -> QString {
+            QString::from(
+                crate::plugins::default_plugin_dir()
+                    .to_string_lossy()
+                    .as_ref(),
+            )
+        }
+
+        fn refresh(&self) {
+            let inventory = crate::plugins::discover_default();
+            let plugins = inventory
+                .plugins
+                .into_iter()
+                .map(|plugin| {
+                    serde_json::json!({
+                        "name": plugin.manifest.name,
+                        "version": plugin.manifest.version,
+                        "description": plugin.manifest.description,
+                        "author": plugin.manifest.author,
+                        "type": match plugin.manifest.plugin_type {
+                            crate::plugins::PluginType::Ui => "ui",
+                            crate::plugins::PluginType::Service => "service",
+                            crate::plugins::PluginType::Theme => "theme",
+                            crate::plugins::PluginType::Extension => "extension",
+                        },
+                        "path": plugin.path,
+                    })
+                })
+                .collect::<Vec<_>>();
+            *self._plugins_json.lock().unwrap() =
+                serde_json::to_string(&plugins).unwrap_or_else(|_| "[]".to_string());
+            *self._diagnostics_json.lock().unwrap() =
+                serde_json::to_string(&inventory.diagnostics).unwrap_or_else(|_| "[]".to_string());
+            self.plugins_json_changed();
+            self.diagnostics_json_changed();
+            self.plugin_directory_changed();
+        }
+    }
+
     /// 最近文件模型
     #[derive(QObject, Default)]
     pub struct RecentFilesModel {
@@ -160,11 +224,13 @@ mod ui_backend {
         register!(AppInfo, "AppInfo");
         register!(NavigationManager, "NavigationManager");
         register!(ConfigManager, "ConfigManager");
+        register!(PluginManagerBackend, "PluginManagerBackend");
         register!(RecentFilesModel, "RecentFilesModel");
         register!(
             crate::ui::discover_manager::DiscoverManager,
             "DiscoverManager"
         );
+        register!(crate::ui::share_manager::ShareManager, "ShareManager");
         register!(crate::ui::player_window::PlayerBackend, "PlayerBackend");
         register!(crate::ui::editor_window::EditorBackend, "EditorBackend");
         register!(crate::ui::theme_detector::ThemeDetector, "ThemeDetector");

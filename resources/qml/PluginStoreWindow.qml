@@ -5,424 +5,281 @@ import QtQuick.Layouts 1.15
 import Aeterna 1.0
 
 ApplicationWindow {
-    id: pluginStoreWindow
+    id: pluginInventoryWindow
     width: 800
     height: 600
-    minimumWidth: 700
-    minimumHeight: 450
-    title: "插件商店 - Aeterna"
-    color: Theme.materialBase
-
-    
+    minimumWidth: 680
+    minimumHeight: 440
+    title: "已安装插件 - Aeterna"
+    color: Theme.surfaceBase
 
     property string searchText: ""
-    property var installedPlugins: []
+    property bool diagnosticsExpanded: false
 
-    AppInfo { id: appInfo }
+    PluginManagerBackend {
+        id: pluginBackend
+        onPlugins_jsonChanged: pluginInventoryWindow.populatePlugins()
+        onDiagnostics_jsonChanged: pluginInventoryWindow.populateDiagnostics()
+    }
+
+    ListModel { id: pluginListModel }
+    ListModel { id: diagnosticsModel }
+
+    function populatePlugins() {
+        try {
+            var plugins = JSON.parse(pluginBackend.plugins_json)
+            pluginListModel.clear()
+            for (var i = 0; i < plugins.length; ++i) {
+                var plugin = plugins[i]
+                var matches = searchText === ""
+                    || plugin.name.toLowerCase().indexOf(searchText) >= 0
+                    || plugin.description.toLowerCase().indexOf(searchText) >= 0
+                    || plugin.author.toLowerCase().indexOf(searchText) >= 0
+                if (matches)
+                    pluginListModel.append(plugin)
+            }
+        } catch (e) {
+            pluginListModel.clear()
+        }
+    }
+
+    function populateDiagnostics() {
+        try {
+            var diagnostics = JSON.parse(pluginBackend.diagnostics_json)
+            diagnosticsModel.clear()
+            for (var i = 0; i < diagnostics.length; ++i)
+                diagnosticsModel.append({ message: diagnostics[i] })
+        } catch (e) {
+            diagnosticsModel.clear()
+        }
+    }
+
+    function refreshInventory() {
+        pluginBackend.refresh()
+    }
+
+    Component.onCompleted: refreshInventory()
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spacing24
         spacing: Theme.spacing16
 
-        // Header
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacing16
 
-            Text {
-                text: "插件商店"
-                font.pixelSize: Theme.typeTitle2
-                font.weight: Theme.weightBold
-                font.family: Theme.fontSans
-                color: Theme.foreground
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing4
+
+                Text {
+                    text: "已安装插件"
+                    font.pixelSize: Theme.typeTitle2
+                    font.weight: Theme.weightBold
+                    font.family: Theme.fontSans
+                    color: Theme.foreground
+                }
+                Text {
+                    text: "实验性：仅显示本地插件清单；插件不会被加载或执行。"
+                    font.pixelSize: Theme.typeFootnote
+                    font.family: Theme.fontSans
+                    color: Theme.warning
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
             }
 
-            Item { Layout.fillWidth: true }
-
-            // Search bar
             PinguoTextField {
                 id: searchField
-                Layout.preferredWidth: 280
+                Layout.preferredWidth: 250
                 leadingIcon: "magnifyingglass"
-                placeholderText: "搜索插件..."
+                placeholderText: "筛选本地清单"
                 onTextChanged: {
-                    pluginStoreWindow.searchText = text.toLowerCase()
+                    pluginInventoryWindow.searchText = text.toLowerCase()
+                    pluginInventoryWindow.populatePlugins()
                 }
+            }
+
+            PinguoButton {
+                text: "刷新本地清单"
+                icon: "arrow.uturn.forward"
+                variant: PinguoButton.Secondary
+                onClicked: pluginInventoryWindow.refreshInventory()
             }
         }
 
-        // Plugin list
-        ScrollView {
+        Material {
+            Layout.fillWidth: true
+            Layout.preferredHeight: pluginDirectoryText.implicitHeight + Theme.spacing16 * 2
+            tier: Material.Elevated
+            radius: Theme.radiusMedium
+
+            Text {
+                id: pluginDirectoryText
+                anchors.fill: parent
+                anchors.margins: Theme.spacing16
+                text: "扫描目录：" + pluginBackend.plugin_directory + "\n目录不会由 Aeterna 自动创建。"
+                font.pixelSize: Theme.typeFootnote
+                font.family: Theme.fontMono
+                color: Theme.mutedForeground
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        Material {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            tier: Material.Elevated
+            radius: Theme.radiusLarge
 
             ListView {
                 id: pluginListView
                 anchors.fill: parent
+                anchors.margins: Theme.spacing16
                 model: pluginListModel
                 spacing: Theme.spacing12
+                clip: true
 
-                delegate: Rectangle {
-                    id: pluginCard
+                delegate: Material {
                     width: ListView.view.width
-                    height: pluginCardLayout.implicitHeight + Theme.spacing32
-                    color: Theme.materialElevated
-                    radius: Theme.radiusLarge
-                    border.color: Theme.hairline
-                    border.width: 1
-
-                    Behavior on color {
-                        ColorAnimation { duration: Theme.motionShort; easing.type: Theme.motionStandard }
-                    }
+                    implicitHeight: cardContent.implicitHeight + Theme.spacing16 * 2
+                    tier: Material.Base
+                    radius: Theme.radiusMedium
 
                     RowLayout {
-                        id: pluginCardLayout
+                        id: cardContent
                         anchors.fill: parent
-                        anchors.margins: Theme.spacing24
-                        spacing: Theme.spacing24
+                        anchors.margins: Theme.spacing16
+                        spacing: Theme.spacing16
 
-                        // Plugin icon
                         Rectangle {
-                            Layout.preferredWidth: 56
-                            Layout.preferredHeight: 56
+                            Layout.preferredWidth: Theme.sizeButtonLarge
+                            Layout.preferredHeight: Theme.sizeButtonLarge
                             radius: Theme.radiusMedium
                             color: Qt.alpha(Theme.primary, 0.18)
-
                             Icon {
                                 anchors.centerIn: parent
-                                name: icon || "puzzle"
+                                name: "puzzle"
                                 size: 24
                                 tier: Icon.Accent
+                                Accessible.ignored: true
                             }
                         }
 
-                        // Plugin info
                         ColumnLayout {
                             Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            spacing: Theme.spacing8
-
+                            spacing: Theme.spacing4
                             RowLayout {
-                                spacing: Theme.spacing12
-
+                                Layout.fillWidth: true
                                 Text {
                                     text: name
-                                    font.pixelSize: Theme.typeBody
+                                    Layout.fillWidth: true
+                                    font.pixelSize: Theme.typeHeadline
                                     font.weight: Theme.weightSemibold
                                     font.family: Theme.fontSans
                                     color: Theme.foreground
                                     elide: Text.ElideRight
-                                    Layout.fillWidth: true
                                 }
-
-                                Rectangle {
-                                    Layout.preferredHeight: 20
-                                    Layout.minimumWidth: 40
-                                    implicitWidth: badgeText.implicitWidth + Theme.spacing16
-                                    radius: Theme.radiusPill
-                                    color: installed ? Theme.success : Theme.primary
-
-                                    Text {
-                                        id: badgeText
-                                        anchors.centerIn: parent
-                                        text: installed ? "已安装" : "v" + version
-                                        font.pixelSize: Theme.typeCaption2
-                                        font.family: Theme.fontSans
-                                        color: installed ? Theme.successForeground : Theme.primaryForeground
-                                    }
-                                }
-                            }
-
-                            Text {
-                                text: description
-                                font.pixelSize: Theme.typeSubhead
-                                font.family: Theme.fontSans
-                                color: Theme.mutedForeground
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                maximumLineCount: 2
-                                elide: Text.ElideRight
-                            }
-
-                            RowLayout {
-                                spacing: Theme.spacing24
-                                Layout.topMargin: Theme.spacing8
-
-                                RowLayout {
-                                    spacing: Theme.spacing8
-                                    Icon {
-                                        name: "star"
-                                        size: 16
-                                        tier: Icon.Warning
-                                        accessibleName: "评分 " + rating.toFixed(1)
-                                        Layout.alignment: Qt.AlignVCenter
-                                    }
-                                    Text {
-                                        text: rating.toFixed(1)
-                                        font.pixelSize: Theme.typeCaption1
-                                        font.family: Theme.fontSans
-                                        color: Theme.warning
-                                    }
-                                }
-
-                                RowLayout {
-                                    spacing: Theme.spacing8
-                                    Icon {
-                                        name: "arrow.down.circle"
-                                        size: 16
-                                        tier: Icon.Tertiary
-                                        accessibleName: "下载量 " + formatDownloads(downloads)
-                                        Layout.alignment: Qt.AlignVCenter
-                                    }
-                                    Text {
-                                        text: formatDownloads(downloads)
-                                        font.pixelSize: Theme.typeCaption1
-                                        font.family: Theme.fontSans
-                                        color: Theme.mutedForeground
-                                    }
-                                }
-
                                 Text {
-                                    text: "作者: " + author
+                                    text: "v" + version
                                     font.pixelSize: Theme.typeCaption1
-                                    font.family: Theme.fontSans
+                                    font.family: Theme.fontMono
                                     color: Theme.mutedForeground
                                 }
                             }
-                        }
-
-                        // Action buttons
-                        ColumnLayout {
-                            Layout.alignment: Qt.AlignVCenter
-                            spacing: Theme.spacing8
-
-                            PinguoButton {
-                                id: installButton
-                                text: installed ? "卸载" : "安装"
-                                variant: installed ? PinguoButton.Secondary : PinguoButton.Primary
-                                Layout.preferredWidth: 80
-                                onClicked: {
-                                    if (installed) {
-                                        uninstallPlugin(name)
-                                    } else {
-                                        installPlugin(name)
-                                    }
-                                }
+                            Text {
+                                text: description || "未提供描述"
+                                Layout.fillWidth: true
+                                font.pixelSize: Theme.typeSubhead
+                                font.family: Theme.fontSans
+                                color: Theme.mutedForeground
+                                wrapMode: Text.WordWrap
                             }
-
-                            PinguoButton {
-                                id: detailButton
-                                text: "详情"
-                                variant: PinguoButton.Secondary
-                                Layout.preferredWidth: 80
-                                onClicked: {
-                                    showPluginDetail(name, description, author, version, rating, downloads, compatibleVersion)
-                                }
+                            Text {
+                                text: "作者：" + (author || "未提供") + " · 类型：" + type
+                                Layout.fillWidth: true
+                                font.pixelSize: Theme.typeCaption1
+                                font.family: Theme.fontSans
+                                color: Theme.mutedForeground
+                                elide: Text.ElideMiddle
+                            }
+                            Text {
+                                text: path
+                                Layout.fillWidth: true
+                                font.pixelSize: Theme.typeCaption2
+                                font.family: Theme.fontMono
+                                color: Theme.tertiaryLabel
+                                elide: Text.ElideMiddle
                             }
                         }
                     }
                 }
+
+                Text {
+                    anchors.centerIn: parent
+                    width: parent.width - Theme.spacing32
+                    visible: pluginListModel.count === 0
+                    text: searchText === ""
+                        ? "未发现本地插件清单\n可将 manifest.json 放入上述目录的插件子目录中；Aeterna 不会自动创建该目录。"
+                        : "没有与筛选条件匹配的本地插件清单。"
+                    font.pixelSize: Theme.typeSubhead
+                    font.family: Theme.fontSans
+                    color: Theme.mutedForeground
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                }
             }
         }
 
-        // Bottom bar
-        Rectangle {
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: Theme.hairline
+            visible: diagnosticsModel.count > 0
+            spacing: Theme.spacing8
+
+            PinguoButton {
+                text: "发现 " + diagnosticsModel.count + " 个清单问题"
+                icon: "exclamationmark.triangle"
+                variant: PinguoButton.Text
+                showTrailingArrow: true
+                onClicked: diagnosticsExpanded = !diagnosticsExpanded
+            }
+
+            Material {
+                Layout.fillWidth: true
+                visible: diagnosticsExpanded
+                implicitHeight: diagnosticsColumn.implicitHeight + Theme.spacing12 * 2
+                tier: Material.Overlay
+                radius: Theme.radiusMedium
+
+                ColumnLayout {
+                    id: diagnosticsColumn
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacing12
+                    spacing: Theme.spacing8
+                    Repeater {
+                        model: diagnosticsModel
+                        delegate: Text {
+                            Layout.fillWidth: true
+                            text: "• " + message
+                            font.pixelSize: Theme.typeFootnote
+                            font.family: Theme.fontSans
+                            color: Theme.warning
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+            }
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: Theme.spacing16
-
-            Text {
-                text: "共 " + filteredCount + " 个插件"
-                font.pixelSize: Theme.typeSubhead
-                font.family: Theme.fontSans
-                color: Theme.mutedForeground
-            }
-
             Item { Layout.fillWidth: true }
-
             PinguoButton {
-                id: refreshButton
-                text: "刷新"
-                variant: PinguoButton.Text
-                onClicked: refreshStore()
-            }
-
-            PinguoButton {
-                id: closeButton
                 text: "关闭"
-                variant: PinguoButton.Primary
-                onClicked: pluginStoreWindow.close()
+                variant: PinguoButton.Secondary
+                onClicked: pluginInventoryWindow.close()
             }
         }
-    }
-
-    // Plugin detail dialog (HIG Material.Overlay)
-    Dialog {
-        id: detailDialog
-        title: "插件详情"
-        width: 450
-        height: 350
-        standardButtons: Dialog.Close
-        anchors.centerIn: parent
-        padding: Theme.spacing24
-
-        background: Rectangle {
-            color: Theme.materialOverlay
-            radius: Theme.radiusLarge
-            border.color: Theme.hairline
-            border.width: 1
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            spacing: Theme.spacing16
-
-            Text {
-                id: detailName
-                font.pixelSize: Theme.typeHeadline
-                font.weight: Theme.weightBold
-                font.family: Theme.fontSans
-                color: Theme.foreground
-            }
-
-            Text {
-                id: detailDescription
-                font.pixelSize: Theme.typeSubhead
-                font.family: Theme.fontSans
-                color: Theme.mutedForeground
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-            }
-
-            RowLayout {
-                spacing: Theme.spacing24
-
-                Text {
-                    id: detailVersionText
-                    font.pixelSize: Theme.typeSubhead
-                    font.family: Theme.fontSans
-                    color: Theme.mutedForeground
-                }
-
-                Text {
-                    id: detailAuthorText
-                    font.pixelSize: Theme.typeSubhead
-                    font.family: Theme.fontSans
-                    color: Theme.mutedForeground
-                }
-            }
-
-            RowLayout {
-                spacing: Theme.spacing24
-
-                RowLayout {
-                    spacing: Theme.spacing8
-                    Icon {
-                        name: "star"
-                        size: 16
-                        tier: Icon.Warning
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-                    Text {
-                        id: detailRating
-                        font.pixelSize: Theme.typeSubhead
-                        font.family: Theme.fontSans
-                        color: Theme.warning
-                    }
-                }
-
-                Text {
-                    id: detailDownloads
-                    font.pixelSize: Theme.typeSubhead
-                    font.family: Theme.fontSans
-                    color: Theme.mutedForeground
-                }
-
-                Text {
-                    id: detailCompatible
-                    font.pixelSize: Theme.typeSubhead
-                    font.family: Theme.fontSans
-                    color: Theme.mutedForeground
-                }
-            }
-        }
-    }
-
-    // Data model (populated from remote store API in production)
-    ListModel {
-        id: pluginListModel
-        Component.onCompleted: {
-            append({ name: "NTP 时间同步", description: "通过 NTP 协议自动同步系统时间，支持多服务器配置。", author: "Aeterna", version: "1.2.0", rating: 4.8, downloads: 12500, compatibleVersion: "1.0+", installed: false, icon: "clock" })
-            append({ name: "投屏增强", description: "增强投屏功能，支持自定义分辨率、帧率和编码格式。", author: "Aeterna", version: "0.9.1", rating: 4.5, downloads: 8300, compatibleVersion: "1.0+", installed: false, icon: "antenna" })
-            append({ name: "数据导出", description: "将考试数据导出为 Excel、CSV 或 PDF 格式。", author: "Aeterna", version: "2.0.0", rating: 4.2, downloads: 6100, compatibleVersion: "1.0+", installed: false, icon: "doc" })
-            append({ name: "语音播报", description: "在考试开始和结束时自动语音播报提醒。", author: "第三方", version: "1.0.3", rating: 4.6, downloads: 4200, compatibleVersion: "1.0+", installed: false, icon: "speaker" })
-            append({ name: "主题扩展包", description: "提供 10+ 种额外主题配色方案，支持自定义颜色。", author: "第三方", version: "3.1.0", rating: 4.9, downloads: 9800, compatibleVersion: "1.0+", installed: false, icon: "paintbrush" })
-            append({ name: "远程控制", description: "允许通过局域网远程控制播放器的播放状态。", author: "Aeterna", version: "0.5.0", rating: 3.8, downloads: 2100, compatibleVersion: "1.2+", installed: false, icon: "network" })
-        }
-    }
-
-    // Filtered count property
-    property int filteredCount: {
-        var count = 0
-        for (var i = 0; i < pluginListModel.count; i++) {
-            var item = pluginListModel.get(i)
-            if (searchText === "" ||
-                item.name.toLowerCase().indexOf(searchText) >= 0 ||
-                item.description.toLowerCase().indexOf(searchText) >= 0 ||
-                item.author.toLowerCase().indexOf(searchText) >= 0) {
-                count++
-            }
-        }
-        return count
-    }
-
-    // Functions
-    function formatDownloads(count) {
-        if (count >= 1000) {
-            return (count / 1000).toFixed(1) + "k"
-        }
-        return count.toString()
-    }
-
-    function installPlugin(name) {
-        for (var i = 0; i < pluginListModel.count; i++) {
-            if (pluginListModel.get(i).name === name) {
-                pluginListModel.setProperty(i, "installed", true)
-                console.log("Plugin installed: " + name)
-                break
-            }
-        }
-    }
-
-    function uninstallPlugin(name) {
-        for (var i = 0; i < pluginListModel.count; i++) {
-            if (pluginListModel.get(i).name === name) {
-                pluginListModel.setProperty(i, "installed", false)
-                console.log("Plugin uninstalled: " + name)
-                break
-            }
-        }
-    }
-
-    function refreshStore() {
-        console.log("Refreshing plugin store...")
-        // In production, this would fetch from a remote store API
-    }
-
-    function showPluginDetail(name, description, author, version, rating, downloads, compatibleVersion) {
-        detailName.text = name
-        detailDescription.text = description
-        detailAuthorText.text = "作者: " + author
-        detailVersionText.text = "版本: " + version
-        detailRating.text = rating.toFixed(1)
-        detailDownloads.text = "下载量: " + formatDownloads(downloads)
-        detailCompatible.text = "兼容版本: " + compatibleVersion
-        detailDialog.open()
     }
 }

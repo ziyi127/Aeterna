@@ -31,132 +31,54 @@ pub enum WindowType {
     Custom(String),
 }
 
-/// 单实例锁
+/// 单实例锁。
 ///
-/// 使用文件锁确保只有一个应用实例运行。
+/// 保持一个 OS 级排他文件锁直到进程退出；崩溃时内核自动释放该锁。
 pub struct SingleInstanceLock {
-    lock_file: PathBuf,
+    file: std::fs::File,
 }
 
 impl SingleInstanceLock {
-    /// 尝试获取单实例锁
-    ///
-    /// 返回 Some(lock) 如果成功获取锁，None 如果已有实例在运行。
-    /// 若 `force` 为 true，则无视已有锁文件，强制用当前进程覆盖它。
-    pub fn acquire(force: bool) -> Option<Self> {
+    /// 返回 `Ok(None)` 仅表示已有实例持有锁；其他 I/O 失败必须由调用方处理。
+    pub fn acquire(force: bool) -> std::io::Result<Option<Self>> {
+        if force {
+            ::log::warn!("--force no longer bypasses the single-instance lock");
+        }
         let lock_dir = aeterna_config_dir();
-
-        // 确保目录存在
-        if let Err(e) = std::fs::create_dir_all(&lock_dir) {
-            ::log::warn!(
-                "Failed to create lock directory: {} -> using temp directory",
-                e
-            );
-            // 如果创建失败，回退到临时目录
-            let temp_dir = std::env::temp_dir().join("Aeterna");
-            let _ = std::fs::create_dir_all(&temp_dir);
-            return Self::acquire_in(&temp_dir, force);
-        }
-
-        Self::acquire_in(&lock_dir, force)
+        std::fs::create_dir_all(&lock_dir)?;
+        Self::acquire_in(&lock_dir)
     }
 
-    fn acquire_in(lock_dir: &std::path::Path, force: bool) -> Option<Self> {
+    fn acquire_in(lock_dir: &std::path::Path) -> std::io::Result<Option<Self>> {
+        use fs4::fs_std::FileExt;
+
         let lock_file = lock_dir.join("aeterna.lock");
-        let current_exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| String::from("aeterna"));
-
-        // 如果锁文件存在，检查进程是否存活（force 模式下跳过）
-        if lock_file.exists() && !force {
-            let stale = match std::fs::read_to_string(&lock_file) {
-                Ok(content) => {
-                    let (pid, lock_exe) = parse_lock_content(&content);
-                    if pid > 0 && is_process_running(pid, &lock_exe) {
-                        // 进程存活且路径匹配，锁有效
-                        ::log::warn!(
-                            "Another instance is already running (PID: {}, path: {})",
-                            pid,
-                            lock_exe
-                        );
-                        false
-                    } else {
-                        // 进程已死或路径不匹配，锁过期
-                        if pid > 0 {
-                            ::log::info!(
-                                "Stale lock detected (PID: {} no longer running or path mismatch)",
-                                pid
-                            );
-                        }
-                        true
-                    }
-                }
-                Err(_) => true, // 无法读取，视为过期
-            };
-
-            if stale {
-                ::log::info!("Removing stale lock file");
-                let _ = std::fs::remove_file(&lock_file);
-            } else {
-                // 真正的另一个实例在运行
-                focus_existing_window();
-                return None;
-            }
-        }
-
-        // force 模式：无视已有锁文件，强行覆盖
-        if force && lock_file.exists() {
-            ::log::warn!("Force mode: overwriting existing lock file");
-            eprintln!("⚠ 强制启动模式：无视已有锁文件");
-            let _ = std::fs::remove_file(&lock_file);
-        }
-
-        // 创建新的锁文件，记录 PID 和可执行文件路径
-        match std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
+            .read(true)
             .write(true)
-            .truncate(true)
-            .open(&lock_file)
-        {
-            Ok(mut file) => {
-                let pid = std::process::id();
-                use std::io::Write;
-                // 新格式：第一行 PID，第二行 exe 路径
-                let lock_content = format!("{}\n{}", pid, current_exe);
-                if writeln!(file, "{}", lock_content).is_err() {
-                    ::log::error!("Failed to write PID to lock file");
-                }
-                ::log::info!(
-                    "Single instance lock acquired (PID: {}, path: {})",
-                    pid,
-                    current_exe
-                );
-                Some(SingleInstanceLock { lock_file })
+            .open(lock_file)?;
+        match file.try_lock_exclusive() {
+            Ok(true) => {
+                ::log::info!("Single instance lock acquired");
+                Ok(Some(Self { file }))
             }
-            Err(e) => {
-                ::log::warn!(
-                    "Failed to create lock file: {} -> continuing without lock",
-                    e
-                );
-                Some(SingleInstanceLock {
-                    lock_file: lock_dir.join("aeterna.lock"),
-                })
+            Ok(false) => {
+                focus_existing_window();
+                Ok(None)
             }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                focus_existing_window();
+                Ok(None)
+            }
+            Err(error) => Err(error),
         }
     }
 
-    /// 检查锁是否仍然有效
+    /// The retained handle proves ownership of the kernel lock.
     pub fn is_valid(&self) -> bool {
-        self.lock_file.exists()
-    }
-}
-
-impl Drop for SingleInstanceLock {
-    fn drop(&mut self) {
-        if self.lock_file.exists() {
-            let _ = std::fs::remove_file(&self.lock_file);
-            ::log::info!("Single instance lock released");
-        }
+        self.file.metadata().is_ok()
     }
 }
 
@@ -174,11 +96,17 @@ fn parse_lock_content(content: &str) -> (i32, String) {
     (pid, exe)
 }
 
-/// 检查进程是否仍在运行，并验证可执行文件路径匹配。
+/// 检查进程是否仍在运行，并验证可执行文件路径匹配（跨平台）。
 ///
-/// 在 Linux 上检查 /proc/<pid> 是否存在，如果锁文件中记录了
-/// 可执行文件路径，则还会验证 /proc/<pid>/exe 指向的目标
-/// 是否与记录一致，防止 PID 重用导致的误判。
+/// - **Linux**：检查 `/proc/<pid>` 是否存在；若锁文件记录了可执行文件路径，
+///   还会验证 `/proc/<pid>/exe` 指向的目标是否一致，防止 PID 复用导致的误判。
+/// - **macOS / 其他类 Unix**：使用 `kill(pid, 0)` 探测进程是否存活。
+/// - **Windows**：标准库无法无依赖地查询进程存活，保守地认为锁仍然有效
+///   （崩溃后可用 `--force` 强制启动），以此保证单实例语义。
+///
+/// 旧实现仅使用 `/proc`，在 Windows/macOS 上恒返回 `false`，导致单实例锁
+/// 完全失效（可无限启动多个实例）。本实现按平台分别处理。
+#[cfg(target_os = "linux")]
 fn is_process_running(pid: i32, lock_exe: &str) -> bool {
     if pid <= 0 {
         return false;
@@ -205,6 +133,21 @@ fn is_process_running(pid: i32, lock_exe: &str) -> bool {
         }
         // 如果无法读取 /proc/pid/exe（权限不足等），保守认为进程存在
     }
+    true
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn is_process_running(pid: i32, _lock_exe: &str) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // macOS / *BSD 等：kill(pid, 0) 在进程存在且有权限时返回 0。
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn is_process_running(_pid: i32, _lock_exe: &str) -> bool {
+    // 无法无依赖地查询进程存活，保守认定锁有效。
     true
 }
 
@@ -281,6 +224,27 @@ pub static PENDING_DEEP_LINK: LazyLock<Mutex<Option<DeepLinkAction>>> =
 /// 取出并清空当前待处理的 Deep Link 动作。
 pub fn take_pending_deep_link() -> Option<DeepLinkAction> {
     PENDING_DEEP_LINK.lock().unwrap().take()
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let mut decoded = Vec::with_capacity(value.len());
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => decoded.push(b' '),
+            b'%' if index + 2 < bytes.len() => {
+                let high = (bytes[index + 1] as char).to_digit(16)?;
+                let low = (bytes[index + 2] as char).to_digit(16)?;
+                decoded.push((high * 16 + low) as u8);
+                index += 2;
+            }
+            b'%' => return None,
+            byte => decoded.push(byte),
+        }
+        index += 1;
+    }
+    String::from_utf8(decoded).ok()
 }
 
 /// Deep Link 协议处理
@@ -380,14 +344,15 @@ impl DeepLinkHandler {
             (rest, "")
         };
 
-        // 解析查询参数
+        // Decode query values once before routing; protocol URLs routinely
+        // encode paths and category names.
         let query_params: HashMap<String, String> = if !params.is_empty() {
             params
                 .split('&')
                 .filter_map(|pair| {
                     let mut parts = pair.splitn(2, '=');
-                    let key = parts.next()?.to_string();
-                    let value = parts.next().unwrap_or("").to_string();
+                    let key = percent_decode(parts.next()?)?;
+                    let value = percent_decode(parts.next().unwrap_or(""))?;
                     Some((key, value))
                 })
                 .collect()

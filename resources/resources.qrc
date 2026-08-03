@@ -142,6 +142,8 @@
         <file>qml/ExamInfoEditor.qml</file>
         <file>qml/AlertOverlay.qml</file>
         <file>qml/Icon.qml</file>
+        <file>qml/IconButton.qml</file>
+        <file>qml/GlassSurface.qml</file>
         <file>qml/Card.qml</file>
         <file>qml/ConfirmDialog.qml</file>
         <file>qml/AboutDialog.qml</file>
@@ -150,6 +152,7 @@
         <file>qml/MaterialEditor.qml</file>
         <file>qml/NavItem.qml</file>
         <file>qml/PlayerWindow.qml</file>
+        <file>qml/PluginStoreWindow.qml</file>
         <file>qml/PinguoButton.qml</file>
         <file>qml/PinguoCheckBox.qml</file>
         <file>qml/PinguoComboBox.qml</file>
@@ -167,5 +170,6 @@
         <file>qml/ValidationPanel.qml</file>
         <file>qml/MaterialUtils.qml</file>
         <file>qml/T.qml</file>
+        <file>shaders/icon_tint.frag.qsb</file>
     </qresource>
 </RCC>

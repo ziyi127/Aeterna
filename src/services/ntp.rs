@@ -133,54 +133,75 @@ impl NtpService {
             .map_err(|e| format!("DNS 解析失败: {}", e))?
             .collect();
 
-        let addr = addrs.first().ok_or("无可用地址")?;
+        if addrs.is_empty() {
+            return Err("无可用地址".to_string());
+        }
 
-        let socket = std::net::UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("无法绑定 UDP socket: {}", e))?;
+        let mut errors = Vec::new();
+        for addr in addrs {
+            let bind_addr = if addr.is_ipv4() {
+                "0.0.0.0:0"
+            } else {
+                "[::]:0"
+            };
+            let socket = match std::net::UdpSocket::bind(bind_addr) {
+                Ok(socket) => socket,
+                Err(e) => {
+                    errors.push(format!("{}: 无法绑定 UDP socket: {}", addr, e));
+                    continue;
+                }
+            };
 
-        socket
-            .set_read_timeout(Some(timeout))
-            .map_err(|e| format!("设置超时失败: {}", e))?;
-        socket
-            .set_write_timeout(Some(timeout))
-            .map_err(|e| format!("设置超时失败: {}", e))?;
-        socket
-            .connect(addr)
-            .map_err(|e| format!("连接失败: {}", e))?;
+            if let Err(e) = socket.set_read_timeout(Some(timeout)) {
+                errors.push(format!("{}: 设置读取超时失败: {}", addr, e));
+                continue;
+            }
+            if let Err(e) = socket.set_write_timeout(Some(timeout)) {
+                errors.push(format!("{}: 设置写入超时失败: {}", addr, e));
+                continue;
+            }
+            if let Err(e) = socket.connect(addr) {
+                errors.push(format!("{}: 连接失败: {}", addr, e));
+                continue;
+            }
 
-        // 构建 NTP 请求（SNTP v4，客户端模式）
-        let mut request = [0u8; 48];
-        request[0] = 0x23; // LI=0, VN=4, Mode=3 (client)
+            // 构建 NTP 请求（SNTP v4，客户端模式）
+            let mut request = [0u8; 48];
+            request[0] = 0x23; // LI=0, VN=4, Mode=3 (client)
+            let t1 = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Ok(time) => time,
+                Err(e) => return Err(format!("系统时间错误: {}", e)),
+            };
 
-        // 记录 T1：客户端发送时间
-        let t1 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| format!("系统时间错误: {}", e))?;
+            if let Err(e) = socket.send(&request) {
+                errors.push(format!("{}: 发送请求失败: {}", addr, e));
+                continue;
+            }
 
-        socket
-            .send(&request)
-            .map_err(|e| format!("发送请求失败: {}", e))?;
+            let mut response = [0u8; 48];
+            if let Err(e) = socket.recv(&mut response) {
+                errors.push(format!("{}: 接收响应失败: {}", addr, e));
+                continue;
+            }
 
-        let mut response = [0u8; 48];
-        let _len = socket
-            .recv(&mut response)
-            .map_err(|e| format!("接收响应失败: {}", e))?;
+            let t4 = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Ok(time) => time,
+                Err(e) => return Err(format!("系统时间错误: {}", e)),
+            };
+            match parse_ntp_response(&response, t1, t4) {
+                Ok(ntp_result) => {
+                    return Ok(NtpSyncResult {
+                        offset_ms: ntp_result.offset_ms,
+                        round_trip_delay_ms: ntp_result.round_trip_delay_ms,
+                        server: server.to_string(),
+                        status: NtpSyncStatus::Synced,
+                    });
+                }
+                Err(e) => errors.push(format!("{}: 解析 NTP 响应失败: {}", addr, e)),
+            }
+        }
 
-        // 记录 T4：客户端接收时间
-        let t4 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| format!("系统时间错误: {}", e))?;
-
-        // 手动解析 NTP 响应
-        let ntp_result = parse_ntp_response(&response, t1, t4)
-            .map_err(|e| format!("解析 NTP 响应失败: {}", e))?;
-
-        Ok(NtpSyncResult {
-            offset_ms: ntp_result.offset_ms,
-            round_trip_delay_ms: ntp_result.round_trip_delay_ms,
-            server: server.to_string(),
-            status: NtpSyncStatus::Synced,
-        })
+        Err(errors.join("; "))
     }
 
     #[allow(dead_code)]

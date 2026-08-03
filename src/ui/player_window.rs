@@ -4,7 +4,7 @@ use crate::core::parser;
 use crate::core::player::PlayerCore;
 use crate::core::types::ExamConfig;
 use crate::core::utils::parse_date_time_ms;
-use crate::core::utils::{aeterna_config_dir, strip_file_prefix};
+use crate::core::utils::{aeterna_config_dir, qml_file_input_to_path};
 use crate::services::ntp::{NtpConfig, NtpService, NtpSyncStatus};
 use chrono::{Local, TimeZone};
 use qmetaobject::*;
@@ -677,8 +677,18 @@ impl PlayerBackend {
 
     /// 从文件加载考试配置。对应桌面端 `fileUtils.readJSONFile` + `updateConfig`。
     fn loadConfigFromFile(&self, path: QString) -> bool {
-        let path_str = strip_file_prefix(&path.to_string());
-        let content = match std::fs::read_to_string(&path_str) {
+        let path = match qml_file_input_to_path(&path.to_string()) {
+            Ok(path) => path,
+            Err(e) => {
+                *self._error.lock().unwrap() = e;
+                *self._loaded.lock().unwrap() = false;
+                self.errorChanged();
+                self.loadedChanged();
+                return false;
+            }
+        };
+        let path_str = path.to_string_lossy().to_string();
+        let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
                 *self._error.lock().unwrap() = format!("无法读取文件 {}: {}", path_str, e);

@@ -64,7 +64,7 @@ jobs:
       - name: Install Qt runtime and build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qt6-base-dev qt6-declarative-dev qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qt-labs-platform libgl1-mesa-dev libxkbcommon-dev libfontconfig1-dev
+          sudo apt-get install -y -qq jq qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qt-labs-platform libgl1-mesa-dev libxkbcommon-dev libfontconfig1-dev
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -89,17 +89,65 @@ jobs:
           install -Dm755 "$BIN" "$BARE/aeterna"
           install -Dm644 LICENSE "$BARE/LICENSE"
           install -Dm644 packaging/runtime/README-bare.txt "$BARE/README.txt"
-          mkdir -p "$PORTABLE/lib" "$PORTABLE/plugins" "$PORTABLE/qml/Qt"
-          cp -aL "$QT_LIB"/libQt6{Core,DBus,Gui,LabsPlatform,Network,OpenGL,Qml,QmlMeta,QmlModels,QmlWorkerScript,Quick,QuickControls2,QuickLayouts,QuickTemplates2,Widgets}.so.6 "$PORTABLE/lib/"
-          cp -a "$QT_PLUGINS/platforms" "$PORTABLE/plugins/"
-          [ ! -d "$QT_PLUGINS/imageformats" ] || cp -a "$QT_PLUGINS/imageformats" "$PORTABLE/plugins/"
-          cp -a "$QT_QML/QtQuick" "$PORTABLE/qml/"
-          cp -a "$QT_QML/Qt/labs" "$PORTABLE/qml/Qt/"
+          mkdir -p "$PORTABLE/lib" "$PORTABLE/plugins" "$PORTABLE/qml/Qt/labs"
+
+          # The application QML is embedded in the binary. Copy only the Qt
+          # modules imported by that embedded QML, not the complete Qt QML tree.
+          QML_SCANNER="$(command -v qmlimportscanner || find /usr/lib/qt6 /usr/lib -type f -name qmlimportscanner -print -quit)"
+          test -n "$QML_SCANNER"
+          "$QML_SCANNER" -rootPath resources/qml -importPath "$QT_QML" -output qml-imports.json
+          jq -e 'length > 0' qml-imports.json >/dev/null
+          copy_qml_module() {
+            local module="$1"
+            local source="$QT_QML/${module//./\/}"
+            local destination="$PORTABLE/qml/${module//./\/}"
+            test -d "$source" || { echo "Missing QML module: $module" >&2; exit 1; }
+            mkdir -p "$destination"
+            find "$source" -maxdepth 1 -type f \( -name 'qmldir' -o -name '*.so' -o -name '*.qml' -o -name '*.qmltypes' \) -exec cp -a {} "$destination/" \;
+          }
+          jq -r '.[].name' qml-imports.json | sort -u > qml-imports.used
+          while IFS= read -r module; do
+            case "$module" in
+              QtQuick|QtQuick.*|QtQml|QtQml.*|Qt.labs|Qt.labs.*) copy_qml_module "$module" ;;
+              Aeterna) ;;
+              *) echo "Unexpected QML import: $module" >&2; exit 1 ;;
+            esac
+          done < qml-imports.used
+          grep -Eq '^(QtQuick|QtQuick\.|QtQml|QtQml\.|Qt\.labs\.)' qml-imports.used
+
+          # Start with the desktop platform plugin. Add Qt libraries only when
+          # they are referenced by the executable or deployed Qt plugins.
+          mkdir -p "$PORTABLE/plugins/platforms"
+          cp -a "$QT_PLUGINS/platforms/libqxcb.so" "$PORTABLE/plugins/platforms/"
+          copy_qt_dependencies() {
+            local scan_file="$1"
+            while read -r dependency; do
+              case "$(basename "$dependency")" in
+                libQt6*.so*)
+                  local library="$(basename "$dependency")"
+                  if [ ! -e "$PORTABLE/lib/$library" ]; then
+                    cp -aL "$dependency" "$PORTABLE/lib/$library"
+                    copy_qt_dependencies "$dependency"
+                  fi
+                  ;;
+              esac
+            done < <(ldd "$scan_file" | awk '$3 ~ /^\\// {print $3}')
+          }
+          copy_qt_dependencies "$PORTABLE/bin/aeterna"
+          while IFS= read -r plugin; do
+            copy_qt_dependencies "$plugin"
+          done < <(find "$PORTABLE/qml" "$PORTABLE/plugins" -type f -name '*.so')
+          test -n "$(find "$PORTABLE/lib" -type f -name 'libQt6*.so*' -print -quit)"
+
           printf '%s\n' '[Paths]' 'Prefix=..' 'Libraries=lib' 'Plugins=plugins' 'Qml2Imports=qml' > "$PORTABLE/bin/qt.conf"
+          ! find "$PORTABLE" -type f \( -name 'qmake*' -o -name '*.cmake' -o -name '*.h' -o -name '*.pdb' \) | grep -q .
+          ! grep -R "$QT_LIB\|/opt/qt\|/home/runner" "$PORTABLE" >/dev/null 2>&1
           tar -C dist -czf "dist/aeterna-${VERSION}-linux-x86_64-portable.tar.gz" "$(basename "$PORTABLE")"
           tar -C dist -czf "dist/aeterna-${VERSION}-linux-x86_64-bare.tar.gz" "$(basename "$BARE")"
           tar -tzf "dist/aeterna-${VERSION}-linux-x86_64-portable.tar.gz" >/dev/null
           readelf -d "$PORTABLE/bin/aeterna" | grep -q 'ORIGIN/../lib'
+          ! find "$BARE" -type f \( -name 'libQt6*' -o -name '*.so*' -o -name 'qt.conf' \) | grep -q .
+          du -sh "$PORTABLE" "$BARE"
           sha256sum dist/*.tar.gz > "dist/aeterna-${VERSION}-linux-x86_64.SHA256"
       - uses: actions/upload-artifact@v6
         with:
@@ -142,7 +190,20 @@ jobs:
           Copy-Item LICENSE "$portable\LICENSE"; Copy-Item LICENSE "$bare\LICENSE"
           Copy-Item packaging\runtime\README-portable.txt "$portable\README.txt"
           Copy-Item packaging\runtime\README-bare.txt "$bare\README.txt"
-          & "$qt\bin\windeployqt.exe" --release --qmldir resources\qml --no-translations "$portable\aeterna.exe"
+          & "$qt\bin\windeployqt.exe" --release --qmldir resources\qml --no-translations --no-compiler-runtime "$portable\aeterna.exe"
+          if (-not (Test-Path "$portable\Qt6Core.dll")) { throw 'Qt runtime was not deployed' }
+          if (-not (Test-Path "$portable\platforms\qwindows.dll")) { throw 'Windows platform plugin was not deployed' }
+          if (-not (Test-Path "$portable\qml\QtQuick\qmldir")) { throw 'QtQuick QML module was not deployed' }
+          $forbidden = Get-ChildItem $portable -Recurse -File | Where-Object {
+            $_.Name -match '^(qmake|qmlcachegen|qmlimportscanner)(\.exe)?$' -or
+            $_.Extension -in '.pdb', '.cmake', '.h'
+          }
+          if ($forbidden) { throw "Qt development files leaked into portable package: $($forbidden.FullName -join ', ')" }
+          if (Get-ChildItem $bare -Recurse -File | Where-Object { $_.Name -match '^(Qt6.*\.dll|qwindows\.dll)$' }) {
+            throw 'Bare package contains Qt runtime files'
+          }
+          if ((Get-ChildItem $bare -Recurse -File).Count -ne 3) { throw 'Bare package must contain only executable, license, and README' }
+          Write-Host "Portable files: $((Get-ChildItem $portable -Recurse -File).Count); bare files: $((Get-ChildItem $bare -Recurse -File).Count)"
           Compress-Archive -Path $portable -DestinationPath "dist\aeterna-$version-windows-x86_64-portable.zip"
           Compress-Archive -Path $bare -DestinationPath "dist\aeterna-$version-windows-x86_64-bare.zip"
           Get-ChildItem 'dist\*.zip' | ForEach-Object { "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii "dist\aeterna-$version-windows-x86_64.SHA256"
@@ -187,6 +248,10 @@ jobs:
           install -m644 packaging/runtime/README-bare.txt "$BARE/README.txt"
           test -f "$APP/Contents/PlugIns/platforms/libqcocoa.dylib"
           test -d "$APP/Contents/Resources/qml/QtQuick"
+          ! find "$APP" -type f \( -name '*.dylib' -o -name '*.so' \) -print0 | xargs -0 -r otool -L | grep -E '/opt/homebrew/|/usr/local/Cellar/|/Users/.*/Qt/'
+          ! find "$APP" -type f \( -name 'qmake' -o -name 'qmlimportscanner' -o -name '*.cmake' -o -name '*.h' -o -name '*.pdb' \) | grep -q .
+          test "$(find "$BARE" -type f | wc -l)" -eq 3
+          du -sh "$APP" "$BARE"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/aeterna-${VERSION}-macos-arm64-portable.zip"
           tar -C dist -czf "dist/aeterna-${VERSION}-macos-arm64-bare.tar.gz" "$(basename "$BARE")"
           ! otool -L "$APP/Contents/MacOS/aeterna" | grep -q '/opt/homebrew/Cellar'
@@ -216,10 +281,10 @@ jobs:
           cat > ../release-notes.md <<'EOF'
           ## Aeterna ${{ github.ref_name }}
 
-          Portable archives bundle Qt runtime components and are recommended for most users.
+          Portable archives contain only the Qt runtime components discovered from Aeterna's ELF/PE/Mach-O and QML dependencies; they do not contain the Qt SDK.
           Bare archives contain only Aeterna and require an ABI-compatible Qt 6 runtime.
 
-          Linux portable is a Qt bundle rather than an AppImage and still uses compatible host graphics and system libraries.
+          Linux portable is a dependency-pruned Qt bundle rather than an AppImage and still uses compatible host graphics and system libraries.
           macOS portable is unsigned and not notarized.
           EOF
       - uses: softprops/action-gh-release@v2

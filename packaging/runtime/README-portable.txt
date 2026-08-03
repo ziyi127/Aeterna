@@ -1,13 +1,14 @@
 Aeterna portable package
 ========================
 
-This package bundles the Qt runtime, plugins, and QML modules required by Aeterna.
+This package bundles only the Qt libraries, QML modules, and platform plugins required by Aeterna. It does not contain the Qt SDK, headers, build tools, or unrelated Qt modules.
 
 Linux: this is a Qt bundle, not an AppImage. It still uses compatible host graphics,
-font, DBus, X11/Wayland, and libc libraries.
+font, DBus, X11/Wayland, libc, and GPU driver libraries.
 
-Windows: Qt DLLs and plugins are included. If Windows reports a missing Microsoft
-Visual C++ runtime, install the supported Microsoft Visual C++ Redistributable.
+Windows: only the runtime dependencies discovered by windeployqt are included. The
+Microsoft Visual C++ runtime is expected to be installed on the system.
 
-macOS: the application bundle is unsigned and not notarized. Gatekeeper may require
-right-clicking the application and selecting Open on its first launch.
+macOS: the application bundle contains the deployment-time Qt framework and plugins,
+but is unsigned and not notarized. Gatekeeper may require right-clicking the
+application and selecting Open on its first launch.

@@ -157,7 +157,7 @@ jobs:
                   fi
                   ;;
               esac
-            done < <(ldd "$scan_file" | awk '$3 ~ /^\\// {print $3}')
+            done < <(ldd "$scan_file" | awk '$3 ~ /^\// {print $3}')
           }
           copy_qt_dependencies "$PORTABLE/bin/aeterna"
           while IFS= read -r plugin; do

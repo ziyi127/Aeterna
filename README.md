@@ -115,4 +115,8 @@ Linux 便携包是按 ELF/QML 依赖裁剪的 Qt runtime bundle，不是 AppImag
 
 [GNU General Public License v3.0](LICENSE)
 
+### 第三方代码归属
+
+据项目维护记录，Aeterna 核心模块改编自 [ExamAware2](https://github.com/ExamAware/ExamAware2) TypeScript 项目（原作者 Hello8693），基于上游代码使用 Rust 实现。上游项目采用 GNU GPLv3，改编和 Rust 实现时间为 2026 年 8 月 3 日。详见随项目发布的 [第三方归属声明](THIRD-PARTY-NOTICES.txt)；发布包也会随附该文件。
+
 版权所有 © 2026 [ziyi127](https://github.com/ziyi127)

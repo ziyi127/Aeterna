@@ -1180,12 +1180,12 @@ ApplicationWindow {
     Component.onCompleted: {
         // 初始化系统主题检测
         themeDetector.detect()
-        // 若无外部注入，则使用内部实例
-        if (!settingsWindow.settingsBackend) {
+        // 若无外部注入，则使用内部实例并负责初始化
+        var usingInternalBackend = !settingsWindow.settingsBackend
+        if (usingInternalBackend) {
             settingsWindow.settingsBackend = internalSettingsBackend
+            settingsBackend.load()
         }
-        // 加载设置
-        settingsBackend.load()
         settingsWindow.hydrateFromBackend()
         // 同步自定义颜色到 Hex 输入框
         hexInput.text = settingsBackend.custom_primary_color

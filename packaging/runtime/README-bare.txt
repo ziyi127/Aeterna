@@ -1,7 +1,7 @@
 Aeterna bare binary
 ===================
 
-This archive contains only the Aeterna executable, license, and this README. It
+This archive contains only the Aeterna executable, license, third-party attribution notices, and this README. It
 contains no Qt runtime, QML imports, platform plugins, or Qt SDK files.
 
 Install an ABI-compatible Qt 6 runtime plus the Qt Quick, Qt Quick Controls, Qt

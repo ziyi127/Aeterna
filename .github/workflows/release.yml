@@ -103,10 +103,13 @@ jobs:
           rm -rf dist
           install -Dm755 "$BIN" "$PORTABLE/bin/aeterna"
           install -Dm644 LICENSE "$PORTABLE/LICENSE"
+          install -Dm644 THIRD-PARTY-NOTICES.txt "$PORTABLE/THIRD-PARTY-NOTICES.txt"
           install -Dm644 packaging/runtime/README-portable.txt "$PORTABLE/README.txt"
           install -Dm755 "$BIN" "$BARE/aeterna"
           install -Dm644 LICENSE "$BARE/LICENSE"
+          install -Dm644 THIRD-PARTY-NOTICES.txt "$BARE/THIRD-PARTY-NOTICES.txt"
           install -Dm644 packaging/runtime/README-bare.txt "$BARE/README.txt"
+          test "$(find "$BARE" -type f | wc -l)" -eq 4
           mkdir -p "$PORTABLE/lib" "$PORTABLE/plugins" "$PORTABLE/qml/Qt/labs"
 
           # The application QML is embedded in the binary. Copy only the Qt
@@ -123,7 +126,9 @@ jobs:
             mkdir -p "$destination"
             find "$source" -maxdepth 1 -type f \( -name 'qmldir' -o -name '*.so' -o -name '*.qml' -o -name '*.qmltypes' \) -exec cp -a {} "$destination/" \;
           }
-          jq -r '.[].name' qml-imports.json | sort -u > qml-imports.used
+          # `import "."` resolves local QML embedded through resources.qrc; it is
+          # not a deployable Qt module. Keep the allowlist strict for named imports.
+          jq -r '.[] | select(.name != ".") | .name' qml-imports.json | sort -u > qml-imports.used
           while IFS= read -r module; do
             case "$module" in
               QtQuick|QtQuick.*|QtQml|QtQml.*|Qt.labs|Qt.labs.*) copy_qml_module "$module" ;;
@@ -194,14 +199,25 @@ jobs:
       - name: Install Qt 6
         shell: pwsh
         run: |
-          pip install aqtinstall
-          aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtdeclarative -O D:\a\Qt
+          python -m pip install --disable-pip-version-check "aqtinstall==3.3.0"
+          aqt --version
+          aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O D:\a\Qt
           $qt = 'D:\a\Qt\6.8.3\msvc2022_64'
           "QT_PREFIX=$qt" | Out-File -FilePath $env:GITHUB_ENV -Append
           "QMAKE=$qt\bin\qmake.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           "$qt\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          if (-not (Test-Path "$qt\bin\windeployqt.exe")) { throw 'windeployqt.exe is missing' }
-          if (-not (Test-Path "$qt\qml\QtQuick")) { throw 'QtQuick QML imports are missing' }
+          $requiredPaths = @(
+            "$qt\bin\qmake.exe",
+            "$qt\bin\windeployqt.exe",
+            "$qt\qml\QtQuick\qmldir",
+            "$qt\qml\QtQuick\Controls\qmldir",
+            "$qt\qml\QtQuick\Layouts\qmldir",
+            "$qt\qml\QtQuick\Window\qmldir",
+            "$qt\qml\Qt\labs\platform\qmldir"
+          )
+          foreach ($path in $requiredPaths) {
+            if (-not (Test-Path $path)) { throw "Required Qt component is missing: $path" }
+          }
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -220,12 +236,22 @@ jobs:
           Copy-Item $exe "$portable\aeterna.exe"
           Copy-Item $exe "$bare\aeterna.exe"
           Copy-Item LICENSE "$portable\LICENSE"; Copy-Item LICENSE "$bare\LICENSE"
+          Copy-Item THIRD-PARTY-NOTICES.txt "$portable\THIRD-PARTY-NOTICES.txt"; Copy-Item THIRD-PARTY-NOTICES.txt "$bare\THIRD-PARTY-NOTICES.txt"
           Copy-Item packaging\runtime\README-portable.txt "$portable\README.txt"
           Copy-Item packaging\runtime\README-bare.txt "$bare\README.txt"
           & "$qt\bin\windeployqt.exe" --release --qmldir resources\qml --no-translations --no-compiler-runtime "$portable\aeterna.exe"
           if (-not (Test-Path "$portable\Qt6Core.dll")) { throw 'Qt runtime was not deployed' }
           if (-not (Test-Path "$portable\platforms\qwindows.dll")) { throw 'Windows platform plugin was not deployed' }
-          if (-not (Test-Path "$portable\qml\QtQuick\qmldir")) { throw 'QtQuick QML module was not deployed' }
+          $requiredQmlModules = @(
+            "$portable\qml\QtQuick\qmldir",
+            "$portable\qml\QtQuick\Controls\qmldir",
+            "$portable\qml\QtQuick\Layouts\qmldir",
+            "$portable\qml\QtQuick\Window\qmldir",
+            "$portable\qml\Qt\labs\platform\qmldir"
+          )
+          foreach ($path in $requiredQmlModules) {
+            if (-not (Test-Path $path)) { throw "Required QML module was not deployed: $path" }
+          }
           $forbidden = Get-ChildItem $portable -Recurse -File | Where-Object {
             $_.Name -match '^(qmake|qmlcachegen|qmlimportscanner)(\.exe)?$' -or
             $_.Extension -in '.pdb', '.cmake', '.h'
@@ -234,7 +260,7 @@ jobs:
           if (Get-ChildItem $bare -Recurse -File | Where-Object { $_.Name -match '^(Qt6.*\.dll|qwindows\.dll)$' }) {
             throw 'Bare package contains Qt runtime files'
           }
-          if ((Get-ChildItem $bare -Recurse -File).Count -ne 3) { throw 'Bare package must contain only executable, license, and README' }
+          if ((Get-ChildItem $bare -Recurse -File).Count -ne 4) { throw 'Bare package must contain only executable, license, third-party notices, and README' }
           Write-Host "Portable files: $((Get-ChildItem $portable -Recurse -File).Count); bare files: $((Get-ChildItem $bare -Recurse -File).Count)"
           Compress-Archive -Path $portable -DestinationPath "dist\aeterna-$version-windows-x86_64-portable.zip"
           Compress-Archive -Path $bare -DestinationPath "dist\aeterna-$version-windows-x86_64-bare.zip"
@@ -287,16 +313,19 @@ jobs:
           install -m755 target/aarch64-apple-darwin/release/aeterna "$APP/Contents/MacOS/aeterna"
           sed "s/@VERSION@/${VERSION}/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
           install -m644 LICENSE "$APP/Contents/Resources/LICENSE"
+          install -m644 THIRD-PARTY-NOTICES.txt "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt"
           install -m644 packaging/runtime/README-portable.txt "$APP/Contents/Resources/README.txt"
           "$QT_PREFIX/bin/macdeployqt" "$APP" -qmldir=resources/qml -always-overwrite
           install -m755 target/aarch64-apple-darwin/release/aeterna "$BARE/aeterna"
           install -m644 LICENSE "$BARE/LICENSE"
+          install -m644 THIRD-PARTY-NOTICES.txt "$BARE/THIRD-PARTY-NOTICES.txt"
           install -m644 packaging/runtime/README-bare.txt "$BARE/README.txt"
+          test "$(find "$BARE" -type f | wc -l)" -eq 4
           test -f "$APP/Contents/PlugIns/platforms/libqcocoa.dylib"
           test -d "$APP/Contents/Resources/qml/QtQuick"
           ! find "$APP" -type f \( -name '*.dylib' -o -name '*.so' \) -print0 | xargs -0 -r otool -L | grep -E '/opt/homebrew/|/usr/local/Cellar/|/Users/.*/Qt/'
           ! find "$APP" -type f \( -name 'qmake' -o -name 'qmlimportscanner' -o -name '*.cmake' -o -name '*.h' -o -name '*.pdb' \) | grep -q .
-          test "$(find "$BARE" -type f | wc -l)" -eq 3
+          test "$(find "$BARE" -type f | wc -l)" -eq 4
           du -sh "$APP" "$BARE"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/aeterna-${VERSION}-macos-arm64-portable.zip"
           tar -C dist -czf "dist/aeterna-${VERSION}-macos-arm64-bare.tar.gz" "$(basename "$BARE")"

@@ -1,0 +1,15 @@
+Aeterna — Third-Party Code Notices
+====================================
+
+Aeterna is distributed as a whole under the GNU General Public License,
+version 3, as specified by the LICENSE file in this repository.
+
+The core modules of Aeterna are adapted from the ExamAware2 TypeScript
+project, whose original author is identified as Hello8693. The adapted
+implementation is written in Rust:
+
+  https://github.com/ExamAware/ExamAware2
+
+The upstream project is released under the GNU General Public License,
+version 3 (GPLv3). The adaptation and Rust implementation were made on
+2026-08-03. The complete license text is provided in LICENSE.

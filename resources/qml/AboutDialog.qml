@@ -13,6 +13,7 @@ Dialog {
     padding: 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     standardButtons: Dialog.NoButton
+    property bool showingLegalNotice: false
 
     implicitHeight: bodyColumn.implicitHeight + Theme.spacing32 * 2
     height: Math.min(implicitHeight, parent ? parent.height - Theme.spacing48 : implicitHeight)
@@ -145,6 +146,29 @@ Dialog {
                 horizontalAlignment: Text.AlignHCenter
             }
 
+            Text {
+                Layout.fillWidth: true
+                text: '核心模块改编自 <a href="https://github.com/ExamAware/ExamAware2" style="color: ' + Theme.primary + '; text-decoration: none;">ExamAware2</a> TypeScript 项目（原作者 Hello8693）· GPLv3'
+                textFormat: Text.RichText
+                color: Qt.alpha(Theme.mutedForeground, 0.72)
+                font.pixelSize: Theme.typeCaption2
+                font.family: Theme.fontSans
+                horizontalAlignment: Text.AlignHCenter
+                onLinkActivated: Qt.openUrlExternally(link)
+            }
+
+            // ── Legal notice link ──
+            Text {
+                Layout.fillWidth: true
+                text: '<a href="legal-notice" style="color: ' + Theme.primary + '; text-decoration: none;">法律声明</a>'
+                textFormat: Text.RichText
+                color: Theme.primary
+                font.pixelSize: Theme.typeCaption2
+                font.family: Theme.fontSans
+                horizontalAlignment: Text.AlignHCenter
+                onLinkActivated: root.showingLegalNotice = true
+            }
+
             // ── Close button ──
             PinguoButton {
                 Layout.alignment: Qt.AlignHCenter
@@ -152,6 +176,51 @@ Dialog {
                 text: "关闭"
                 variant: PinguoButton.Primary
                 onClicked: root.close()
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            z: 2
+            visible: root.showingLegalNotice
+            color: Theme.materialOverlay
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Theme.spacing32
+                spacing: Theme.spacing16
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    PinguoButton {
+                        text: "返回"
+                        variant: PinguoButton.Secondary
+                        onClicked: root.showingLegalNotice = false
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "法律声明"
+                        color: Theme.foreground
+                        font.pixelSize: Theme.typeTitle3
+                        font.weight: Theme.weightSemibold
+                        font.family: Theme.fontSans
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    Item { Layout.preferredWidth: 64 }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    text: "本软件核心模块改编自 <a href=\"https://github.com/ExamAware/ExamAware2\" style=\"color: " + Theme.primary + "; text-decoration: none;\">ExamAware2</a> TypeScript 项目（原作者 Hello8693），基于上游代码使用 Rust 实现。上游开源协议为 GNU GPLv3。修改时间：2026 年 8 月 3 日。"
+                    textFormat: Text.RichText
+                    wrapMode: Text.WordWrap
+                    color: Qt.alpha(Theme.mutedForeground, 0.82)
+                    font.pixelSize: Theme.typeCaption2
+                    font.family: Theme.fontSans
+                    lineHeight: 1.3
+                    onLinkActivated: Qt.openUrlExternally(link)
+                }
             }
         }
     }

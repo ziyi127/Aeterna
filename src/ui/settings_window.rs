@@ -355,13 +355,21 @@ pub struct SettingsBackend {
 
 impl SettingsBackend {
     fn settings_json(&self) -> QString {
-        let settings = self._settings.lock().unwrap();
+        let settings = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let json = serde_json::to_string_pretty(&*settings).unwrap_or_default();
         QString::from(json)
     }
 
     fn config_path(&self) -> QString {
-        QString::from(self._config_path.lock().unwrap().as_str())
+        QString::from(
+            self._config_path
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_str(),
+        )
     }
 
     /// 初始化：从文件加载设置
@@ -373,36 +381,60 @@ impl SettingsBackend {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        *self._config_path.lock().unwrap() = config_path.clone();
+        *self
+            ._config_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = config_path.clone();
         self.config_path_changed();
 
-        if let Ok(content) = std::fs::read_to_string(&config_path) {
-            if let Ok(mut settings) = serde_json::from_str::<Settings>(&content) {
-                if settings.cast.device_id.is_empty() {
-                    settings.cast.device_id = generate_secure_id();
+        let loaded_settings = match std::fs::read_to_string(&config_path) {
+            Ok(content) => match serde_json::from_str::<Settings>(&content) {
+                Ok(mut settings) => {
                     if settings.cast.device_id.is_empty() {
-                        ::log::error!("Unable to initialize the persistent device ID");
-                    } else {
-                        let _ = self.save_settings_to_file(&settings, &config_path);
+                        settings.cast.device_id = generate_secure_id();
+                        if settings.cast.device_id.is_empty() {
+                            ::log::error!("Unable to initialize the persistent device ID");
+                        } else {
+                            let _ = self.save_settings_to_file(&settings, &config_path);
+                        }
                     }
+                    settings
                 }
-                *self._settings.lock().unwrap() = settings;
-                self.settings_json_changed();
-                return;
+                Err(error) => {
+                    ::log::error!("Failed to parse settings file: {}", error);
+                    Settings::default()
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let settings = Settings::default();
+                let _ = self.save_settings_to_file(&settings, &config_path);
+                settings
             }
-        }
+            Err(error) => {
+                ::log::error!("Failed to read settings file: {}", error);
+                Settings::default()
+            }
+        };
 
-        // 使用默认设置并保存
-        let default_settings = Settings::default();
-        self.save_settings_to_file(&default_settings, &config_path);
-        *self._settings.lock().unwrap() = default_settings;
+        *self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = loaded_settings;
         self.settings_json_changed();
     }
 
     /// 保存设置
     pub fn save(&self) -> bool {
-        let settings = self._settings.lock().unwrap().clone();
-        let config_path = self._config_path.lock().unwrap().clone();
+        let settings = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let config_path = self
+            ._config_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         self.save_settings_to_file(&settings, &config_path)
     }
 
@@ -411,7 +443,11 @@ impl SettingsBackend {
         let Ok(new_settings) = serde_json::from_str::<Settings>(&json.to_string()) else {
             return false;
         };
-        let old_settings = self._settings.lock().unwrap().clone();
+        let old_settings = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let api = crate::services::http_api::ApiConfig::from_settings(&new_settings.http_api);
         if let Some(service) = crate::services::http_api::global() {
             if service.reconfigure(api).is_err() {
@@ -431,8 +467,14 @@ impl SettingsBackend {
             return false;
         }
 
-        *self._settings.lock().unwrap() = new_settings.clone();
-        *self._config_path.lock().unwrap() = config_path;
+        *self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = new_settings.clone();
+        *self
+            ._config_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = config_path;
         if let Some(runtime) = crate::services::share_runtime::global() {
             runtime.update_settings(new_settings);
         }
@@ -443,11 +485,17 @@ impl SettingsBackend {
     /// 获取当前设置
     #[allow(dead_code)]
     pub fn get_settings(&self) -> Settings {
-        self._settings.lock().unwrap().clone()
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     fn theme_mode(&self) -> QString {
-        let s = self._settings.lock().unwrap();
+        let s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         QString::from(s.appearance.theme_mode.as_str())
     }
 
@@ -455,7 +503,10 @@ impl SettingsBackend {
         let mode_str = mode.to_string();
         let valid = ["auto", "dark", "light"].contains(&mode_str.as_str());
         if valid {
-            let mut s = self._settings.lock().unwrap();
+            let mut s = self
+                ._settings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if s.appearance.theme_mode != mode_str {
                 s.appearance.theme_mode = mode_str;
                 drop(s);
@@ -466,13 +517,19 @@ impl SettingsBackend {
     }
 
     fn custom_primary_color(&self) -> QString {
-        let s = self._settings.lock().unwrap();
+        let s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         QString::from(s.appearance.custom_primary_color.as_str())
     }
 
     fn set_custom_primary_color(&self, color: QString) {
         let color_str = color.to_string();
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.appearance.custom_primary_color != color_str {
             s.appearance.custom_primary_color = color_str;
             drop(s);
@@ -482,11 +539,18 @@ impl SettingsBackend {
     }
 
     fn ui_access_enabled(&self) -> bool {
-        self._settings.lock().unwrap().player.ui_access_enabled
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .player
+            .ui_access_enabled
     }
 
     fn set_ui_access_enabled(&self, enabled: bool) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.player.ui_access_enabled != enabled {
             s.player.ui_access_enabled = enabled;
             drop(s);
@@ -496,11 +560,18 @@ impl SettingsBackend {
     }
 
     fn exit_password_enabled(&self) -> bool {
-        self._settings.lock().unwrap().player.exit_password_enabled
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .player
+            .exit_password_enabled
     }
 
     fn set_exit_password_enabled(&self, enabled: bool) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.player.exit_password_enabled != enabled {
             s.player.exit_password_enabled = enabled;
             drop(s);
@@ -510,12 +581,22 @@ impl SettingsBackend {
     }
 
     fn exit_password(&self) -> QString {
-        QString::from(self._settings.lock().unwrap().player.exit_password.as_str())
+        QString::from(
+            self._settings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .player
+                .exit_password
+                .as_str(),
+        )
     }
 
     fn set_exit_password(&self, password: QString) {
         let password_str = password.to_string();
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.player.exit_password != password_str {
             s.player.exit_password = password_str;
             drop(s);
@@ -527,17 +608,27 @@ impl SettingsBackend {
     // ── Time / NTP properties ──
 
     fn ntp_servers_json(&self) -> QString {
-        let s = self._settings.lock().unwrap();
+        let s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let json = serde_json::to_string(&s.time.ntp_servers).unwrap_or_else(|_| "[]".to_string());
         QString::from(json)
     }
 
     fn ntp_auto_sync(&self) -> bool {
-        self._settings.lock().unwrap().time.auto_sync
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .time
+            .auto_sync
     }
 
     fn set_ntp_auto_sync(&self, value: bool) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.time.auto_sync != value {
             s.time.auto_sync = value;
             drop(s);
@@ -547,11 +638,18 @@ impl SettingsBackend {
     }
 
     fn ntp_periodic_sync(&self) -> bool {
-        self._settings.lock().unwrap().time.periodic_sync
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .time
+            .periodic_sync
     }
 
     fn set_ntp_periodic_sync(&self, value: bool) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.time.periodic_sync != value {
             s.time.periodic_sync = value;
             drop(s);
@@ -561,11 +659,18 @@ impl SettingsBackend {
     }
 
     fn ntp_sync_interval_minutes(&self) -> i32 {
-        self._settings.lock().unwrap().time.sync_interval_minutes
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .time
+            .sync_interval_minutes
     }
 
     fn set_ntp_sync_interval_minutes(&self, value: i32) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.time.sync_interval_minutes != value {
             s.time.sync_interval_minutes = value.clamp(1, 1440);
             drop(s);
@@ -585,11 +690,18 @@ impl SettingsBackend {
     // ── Player display settings ──
 
     fn show_seconds(&self) -> bool {
-        self._settings.lock().unwrap().player.show_seconds
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .player
+            .show_seconds
     }
 
     fn set_show_seconds(&self, value: bool) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.player.show_seconds != value {
             s.player.show_seconds = value;
             drop(s);
@@ -599,11 +711,18 @@ impl SettingsBackend {
     }
 
     fn show_date(&self) -> bool {
-        self._settings.lock().unwrap().player.show_date
+        self._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .player
+            .show_date
     }
 
     fn set_show_date(&self, value: bool) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if s.player.show_date != value {
             s.player.show_date = value;
             drop(s);
@@ -628,7 +747,10 @@ impl SettingsBackend {
         });
         // 找到 server 在列表中的索引
         let idx = {
-            let s = self._settings.lock().unwrap();
+            let s = self
+                ._settings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             s.time
                 .ntp_servers
                 .iter()
@@ -661,7 +783,14 @@ impl SettingsBackend {
 
     /// 同步所有 NTP 服务器，取第一个成功的结果。
     fn sync_ntp_all(&self) -> bool {
-        let servers = { self._settings.lock().unwrap().time.ntp_servers.clone() };
+        let servers = {
+            self._settings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .time
+                .ntp_servers
+                .clone()
+        };
         if servers.is_empty() {
             return false;
         }
@@ -696,7 +825,10 @@ impl SettingsBackend {
 
     /// 添加一个空的 NTP 服务器条目
     fn add_ntp_server(&self) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         s.time.ntp_servers.push(String::new());
         drop(s);
         self.ntp_servers_json_changed();
@@ -705,7 +837,10 @@ impl SettingsBackend {
 
     /// 删除指定索引的 NTP 服务器
     fn remove_ntp_server(&self, index: i32) {
-        let mut s = self._settings.lock().unwrap();
+        let mut s = self
+            ._settings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let idx = index as usize;
         if idx < s.time.ntp_servers.len() {
             s.time.ntp_servers.remove(idx);

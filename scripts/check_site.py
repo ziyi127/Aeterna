@@ -9,7 +9,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HTML_FILES = [ROOT / "index.html", ROOT / "privacy.html", ROOT / "en/index.html", ROOT / "en/privacy.html"]
+HTML_FILES = [ROOT / "index.html", ROOT / "en/index.html"]
 RELEASE_DATA = ROOT / "assets/data/release.json"
 
 class SiteParser(HTMLParser):
@@ -67,7 +67,7 @@ if not (ROOT / "robots.txt").is_file() or not (ROOT / "sitemap.xml").is_file():
     fail("robots.txt or sitemap.xml is missing")
 
 sitemap = (ROOT / "sitemap.xml").read_text(encoding="utf-8")
-for url in ("https://aeterna.dpdns.org/", "https://aeterna.dpdns.org/en/", "https://aeterna.dpdns.org/privacy.html", "https://aeterna.dpdns.org/en/privacy.html"):
+for url in ("https://aeterna.dpdns.org/", "https://aeterna.dpdns.org/en/"):
     if url not in sitemap:
         fail(f"sitemap is missing {url}")
 

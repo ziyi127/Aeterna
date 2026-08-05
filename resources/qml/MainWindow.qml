@@ -27,6 +27,9 @@ ApplicationWindow {
     property int examCount: 0
     property var loadedConfig: null
     property var activePlayerWindow: null
+    property var activeSettingsWindow: null
+    property bool settingsCreationPending: false
+    property string pendingSettingsCategory: "basic"
 
     // ── Discover state ──
     property var discoveredDevices: []
@@ -1281,31 +1284,66 @@ ApplicationWindow {
 
     Loader {
         id: settingsLoader
+
+        function normalizeCategory(category) {
+            return typeof category === "string" && category !== "" ? category : "basic"
+        }
+
+        function activateSettingsWindow(win, category) {
+            if (win.selectCategory) win.selectCategory(category)
+            win.show()
+            win.raise()
+            win.requestActivate()
+        }
+
         function openSettings(category) {
+            var requestedCategory = normalizeCategory(category)
+            if (mainWindow.activeSettingsWindow) {
+                activateSettingsWindow(mainWindow.activeSettingsWindow, requestedCategory)
+                return
+            }
+
+            mainWindow.pendingSettingsCategory = requestedCategory
+            if (mainWindow.settingsCreationPending) return
+
+            mainWindow.settingsCreationPending = true
             var comp = Qt.createComponent("qrc:/qml/SettingsWindow.qml")
-            function doCreate() {
-                if (comp.status !== Component.Ready) {
-                    console.error("SettingsWindow not ready: " + comp.errorString())
+            var finished = false
+            function finishCreation() {
+                if (finished) return
+                if (comp.status === Component.Error) {
+                    finished = true
+                    mainWindow.settingsCreationPending = false
+                    console.error("Failed to load SettingsWindow: " + comp.errorString())
                     return
                 }
-                var props = {
+                if (comp.status !== Component.Ready) return
+
+                finished = true
+                var win = comp.createObject(mainWindow, {
                     "settingsBackend": settingsBackend,
-                    "trayIconAvailable": trayIcon.available
-                }
-                if (category) props.initialCategory = category
-                var win = comp.createObject(mainWindow, props)
+                    "trayIconAvailable": trayIcon.available,
+                    "initialCategory": mainWindow.pendingSettingsCategory
+                })
+                mainWindow.settingsCreationPending = false
                 if (!win) {
                     console.error("Failed to create SettingsWindow instance")
                     return
                 }
-                win.show()
+
+                mainWindow.activeSettingsWindow = win
+                win.destroyed.connect(function() {
+                    if (mainWindow.activeSettingsWindow === win) {
+                        mainWindow.activeSettingsWindow = null
+                    }
+                })
+                activateSettingsWindow(win, mainWindow.pendingSettingsCategory)
             }
-            if (comp.status === Component.Ready) {
-                doCreate()
-            } else if (comp.status === Component.Error) {
-                console.error("Failed to load SettingsWindow: " + comp.errorString())
+
+            if (comp.status === Component.Ready || comp.status === Component.Error) {
+                finishCreation()
             } else {
-                comp.statusChanged.connect(doCreate)
+                comp.statusChanged.connect(finishCreation)
             }
         }
     }

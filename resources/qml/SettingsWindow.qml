@@ -26,6 +26,7 @@ ApplicationWindow {
     property string initialCategory: "basic"
 
     property bool isHydrating: false
+    property bool isInitialized: false
     property var settings: ({
         // Basic
         autoStart: false,
@@ -123,7 +124,7 @@ ApplicationWindow {
 
     // ── Persist local settings to backend ──
     function syncToBackend() {
-        if (isHydrating || !settingsBackend) return
+        if (!isInitialized || isHydrating || !settingsBackend) return
         var s = settingsWindow.settings
         try {
             var saved = JSON.parse(settingsBackend.settings_json)
@@ -300,7 +301,7 @@ ApplicationWindow {
                                 PinguoTextField {
                                     text: settingsWindow.settings.configDir
                                     Layout.fillWidth: true
-                                    onTextChanged: {
+                                    inputItem.onEditingFinished: {
                                         settingsWindow.settings.configDir = text
                                         settingsWindow.syncToBackend(); console.log("Settings: configDir =", text)
                                     }
@@ -592,7 +593,7 @@ ApplicationWindow {
                                         text: settingsBackend.exit_password
                                         inputItem.echoMode: TextInput.Password
                                         Layout.fillWidth: true
-                                        onTextChanged: {
+                                        inputItem.onEditingFinished: {
                                             settingsBackend.exit_password = text
                                             settingsWindow.syncToBackend(); console.log("Settings: exitPassword updated")
                                         }
@@ -790,7 +791,7 @@ ApplicationWindow {
                                         PinguoTextField {
                                             text: server
                                             Layout.fillWidth: true
-                                            onTextChanged: {
+                                            inputItem.onEditingFinished: {
                                                 ntpServerModel.setProperty(index, "server", text)
                                                 timePage.saveNtpServers()
                                             }
@@ -898,6 +899,7 @@ ApplicationWindow {
                         }
                     }
                     function saveNtpServers() {
+                        if (!settingsWindow.isInitialized || settingsWindow.isHydrating || !settingsBackend) return
                         var arr = []
                         for (var i = 0; i < ntpServerModel.count; i++) {
                             arr.push(ntpServerModel.get(i).server)
@@ -997,7 +999,7 @@ ApplicationWindow {
                                         text: settingsWindow.settings.apiToken
                                         inputItem.echoMode: TextInput.Password
                                         Layout.fillWidth: true
-                                        onTextChanged: {
+                                        inputItem.onEditingFinished: {
                                             settingsWindow.settings.apiToken = text
                                             settingsWindow.syncToBackend(); console.log("Settings: apiToken updated")
                                         }
@@ -1059,7 +1061,14 @@ ApplicationWindow {
                                 RowLayout {
                                     spacing: Theme.spacing12
                                     Text { text: "设备名称:"; color: Theme.foreground; font.pixelSize: Theme.typeSubhead; font.family: Theme.fontSans }
-                                    PinguoTextField { text: settingsWindow.settings.deviceName; Layout.fillWidth: true; onTextChanged: { settingsWindow.settings.deviceName = text; settingsWindow.syncToBackend(); console.log("Settings: deviceName =", text) } }
+                                    PinguoTextField {
+                                        text: settingsWindow.settings.deviceName
+                                        Layout.fillWidth: true
+                                        inputItem.onEditingFinished: {
+                                            settingsWindow.settings.deviceName = text
+                                            settingsWindow.syncToBackend(); console.log("Settings: deviceName =", text)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1177,24 +1186,36 @@ ApplicationWindow {
         ListElement { key: "about";      name: "关于";  iconName: "info" }
     }
 
+    function selectCategory(category) {
+        var selectedIndex = 0
+        if (typeof category === "string" && category !== "") {
+            for (var i = 0; i < categoryModel.count; i++) {
+                if (categoryModel.get(i).key === category) {
+                    selectedIndex = i
+                    break
+                }
+            }
+        }
+        categoryList.currentIndex = selectedIndex
+    }
+
     Component.onCompleted: {
         // 初始化系统主题检测
         themeDetector.detect()
         // 若无外部注入，则使用内部实例并负责初始化
-        var usingInternalBackend = !settingsWindow.settingsBackend
-        if (usingInternalBackend) {
+        if (!settingsWindow.settingsBackend) {
             settingsWindow.settingsBackend = internalSettingsBackend
-            settingsBackend.load()
+            internalSettingsBackend.load()
+        }
+        if (!settingsWindow.settingsBackend) {
+            console.warn("Settings: no backend available during initialization")
+            return
         }
         settingsWindow.hydrateFromBackend()
         // 同步自定义颜色到 Hex 输入框
         hexInput.text = settingsBackend.custom_primary_color
         // 导航到初始分类
-        for (var i = 0; i < categoryModel.count; i++) {
-            if (categoryModel.get(i).key === initialCategory) {
-                categoryList.currentIndex = i
-                break
-            }
-        }
+        settingsWindow.selectCategory(initialCategory)
+        settingsWindow.isInitialized = true
     }
 }

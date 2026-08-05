@@ -263,7 +263,8 @@ impl HttpApiService {
     /// Runs the lifetime supervisor. It deliberately remains active when
     /// disabled so `reconfigure` can later install a listener without restart.
     pub fn start(self: Arc<Self>) -> std::io::Result<()> {
-        if let Err(error) = self.reconfigure(self.config.lock().unwrap().clone()) {
+        let initial_config = self.config.lock().unwrap().clone();
+        if let Err(error) = self.reconfigure(initial_config) {
             let mut lifecycle = self.lifecycle.lock().unwrap();
             lifecycle.message = format!("HTTP API unavailable: {error}");
             log::warn!("{}", lifecycle.message);
@@ -845,6 +846,34 @@ fn handle_ws_unavailable(stream: &mut TcpStream, cors: Option<CorsPolicy>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_initializes_listener_without_self_deadlocking() {
+        let service = Arc::new(HttpApiService::with_config_and_runtime(
+            ApiConfig {
+                enabled: true,
+                port: 0,
+                ..ApiConfig::default()
+            },
+            default_share_runtime(),
+        ));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let observer = service.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            let status = observer.status();
+            let _ = sender.send(status);
+        });
+        std::thread::spawn(move || {
+            let _ = service.start();
+        });
+
+        let status = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("HTTP API startup must not deadlock");
+        assert!(status.running);
+        assert_ne!(status.port, 0);
+    }
 
     #[test]
     fn reconfigure_updates_live_auth_and_cors_without_rebinding() {
